@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PoseRun 跑姿分析系统</title>
+    <link href="/vendor/bootstrap-5.3.0/bootstrap.min.css" rel="stylesheet">
+    <link href="/common.css" rel="stylesheet">
+</head>
+<body>
+    <script>window.PAGE = 'home';</script>
+
+    <div class="container-fluid">
+        <!-- 欢迎横幅 -->
+        <div class="hero text-center text-white py-4">
+            <span class="hero-tag"><i class="fas fa-running"></i>本地视频分析 · 看清每一帧</span>
+            <h1 class="mt-3">跑姿分析，<span class="hero-flame">从这里开始</span></h1>
+            <p class="lead mb-4" style="opacity: 0.92;">每段视频只分析一个主体：自动确定前景跑者，查看二维测量、有效帧覆盖率与可下载报告</p>
+            <div class="hero-actions"><a class="btn btn-primary btn-lg" href="/upload.html"><i class="fas fa-upload me-2"></i>上传视频，开始分析</a><a class="btn btn-outline-light" href="/history.html">查看历史记录 <i class="fas fa-arrow-right ms-1"></i></a></div>
+            <p class="hero-disclaimer mt-3 mb-0">允许背景或前后有人，自动确定明显的前景跑者并持续锁定；主体不明确、交叉遮挡或跟丢时停止分析，不自动换人。上传后需手动开始，系统不验证真实身份。测量与评分分开：当前不输出未经验证的技术评分、触地诊断或训练处方。</p>
+        </div>
+
+        <!-- 功能入口 -->
+        <div class="row g-4 justify-content-center pb-4">
+            <div class="col-md-6 col-lg-4">
+                <a class="feature-card" href="/trend.html">
+                    <div class="fc-icon"><i class="fas fa-chart-line"></i></div>
+                    <h5>指标趋势</h5>
+                    <p>对比历次记录的测量与有效帧覆盖率；证据不足时不判断进步或退步。</p>
+                    <span class="fc-go">查看趋势 <i class="fas fa-arrow-right"></i></span>
+                </a>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <a class="feature-card" href="/profile.html">
+                    <div class="fc-icon fc-amber"><i class="fas fa-user-edit"></i></div>
+                    <h5>跑者画像</h5>
+                    <p>记录身体参数、训练背景与伤病信息，补充分析上下文；不替代医疗评估。</p>
+                    <span class="fc-go fc-go-amber">完善画像 <i class="fas fa-arrow-right"></i></span>
+                </a>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <a class="feature-card" href="/training.html">
+                    <div class="fc-icon"><i class="fas fa-link"></i></div>
+                    <h5>训练联动</h5>
+                    <p>查看分析记录与训练联动状态；测量证据不足时不自动生成训练处方。</p>
+                    <span class="fc-go">查看联动 <i class="fas fa-arrow-right"></i></span>
+                </a>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <a class="feature-card" href="/results.html">
+                    <div class="fc-icon"><i class="fas fa-chart-line"></i></div>
+                    <h5>分析结果</h5>
+                    <p>查看最近一次二维测量、有效帧覆盖率、跟踪停止原因与报告下载。</p>
+                    <span class="fc-go">查看结果 <i class="fas fa-arrow-right"></i></span>
+                </a>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <a class="feature-card" href="/camera.html">
+                    <div class="fc-icon"><i class="fas fa-video"></i></div>
+                    <h5>摄像头预览</h5>
+                    <p>检查拍摄角度与全身入镜情况；当前仅提供本地预览，不作实时姿态推理。</p>
+                    <span class="fc-go">打开摄像头 <i class="fas fa-arrow-right"></i></span>
+                </a>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <a class="feature-card" href="/history.html">
+                    <div class="fc-icon fc-green"><i class="fas fa-history"></i></div>
+                    <h5>历史记录与对比</h5>
+                    <p>查看你历次跑姿分析的完整记录，勾选记录对比测量与覆盖率，未知值不计为零分。</p>
+                    <span class="fc-go fc-go-green">查看历史 <i class="fas fa-arrow-right"></i></span>
+                </a>
+            </div>
+            <div class="col-md-6 col-lg-4" id="homeUsersCard" style="display: none;">
+                <a class="feature-card" href="/users.html">
+                    <div class="fc-icon fc-amber"><i class="fas fa-users-cog"></i></div>
+                    <h5>人员管理</h5>
+                    <p>管理员功能：调整用户角色、启用/禁用账号、重置密码、删除用户。</p>
+                    <span class="fc-go fc-go-amber">进入管理 <i class="fas fa-arrow-right"></i></span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="/common.js"></script>
+    <script src="/icons.js"></script>
+    <script>
+        // 管理员在首页也展示人员管理入口
+        function onAuthReady(user) {
+            document.getElementById('homeUsersCard').style.display = user && user.role === 'admin' ? '' : 'none';
+        }
+
+        // 页面加载时，如果已经登录，立即应用认证状态
+        (function () {
+            const user = authUser;
+            if (user) {
+                onAuthReady(user);
+            }
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>趋势追踪 - PoseRun 跑姿分析系统</title>
+    <link href="/vendor/bootstrap-5.3.0/bootstrap.min.css" rel="stylesheet">
+    <link href="/common.css" rel="stylesheet">
+</head>
+<body>
+    <script>window.PAGE = 'trend';</script>
+
+    <div class="container-fluid">
+        <div class="row justify-content-center">
+            <div class="col-md-11 py-4">
+
+                <!-- 趋势总览 -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h5><i class="fas fa-chart-area me-2"></i>指标趋势</h5>
+                        <div class="d-flex align-items-center gap-2">
+                            <select class="form-select form-select-sm" id="trendLimit" style="width: auto;">
+                                <option value="10">最近 10 次</option>
+                                <option value="20" selected>最近 20 次</option>
+                                <option value="30">最近 30 次</option>
+                            </select>
+                            <button class="btn btn-sm btn-primary" id="refreshTrendBtn"><i class="fas fa-sync me-1"></i>刷新</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="trendAlerts"></div>
+                        <div id="trendBody">
+                            <div class="text-center text-muted py-4">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 时间序列图表 -->
+                <div class="card mt-3" id="chartCard" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-line-chart me-2"></i>时间序列</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3" id="chartRow"></div>
+                    </div>
+                </div>
+
+                <!-- A/B 对比 -->
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5><i class="fas fa-exchange-alt me-2"></i>A/B 对比</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-5">
+                                <label class="form-label">记录 A（较早）</label>
+                                <select class="form-select" id="compareA"></select>
+                            </div>
+                            <div class="col-md-5">
+                                <label class="form-label">记录 B（较晚）</label>
+                                <select class="form-select" id="compareB"></select>
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-primary w-100" id="compareAbBtn"><i class="fas fa-exchange-alt me-1"></i>对比</button>
+                            </div>
+                        </div>
+                        <div id="compareAbResult" class="mt-3" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <!-- 训练进度 -->
+                <div class="card mt-3" id="progressCard" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-trophy me-2"></i>训练进度</h5>
+                    </div>
+                    <div class="card-body" id="progressBody"></div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="/common.js"></script>
+    <script src="/icons.js"></script>
+    <script>
+        let allRecords = [];
+
+        function onAuthReady(user) {
+            loadTrend();
+            loadProgress();
+            loadCompareOptions();
+        }
+
+        document.getElementById('refreshTrendBtn').addEventListener('click', loadTrend);
+        document.getElementById('trendLimit').addEventListener('change', loadTrend);
+        document.getElementById('compareAbBtn').addEventListener('click', doCompareAb);
+
+        async function loadTrend() {
+            const limit = document.getElementById('trendLimit').value;
+            const body = document.getElementById('trendBody');
+            const alertsDiv = document.getElementById('trendAlerts');
+            body.innerHTML = '<div class="text-center text-muted py-4">加载中...</div>';
+            alertsDiv.innerHTML = '';
+
+            try {
+                const resp = await apiFetch('/api/trend?limit=' + limit);
+                const data = await resp.json();
+                if (!resp.ok) { body.innerHTML = '<div class="alert alert-danger">' + escapeHtml(data.error || '加载失败') + '</div>'; return; }
+                if (data.status === 'empty') {
+                    body.innerHTML = '<div class="text-center text-muted py-4">暂无足够数据（至少需要 2 次分析）</div>';
+                    return;
+                }
+                renderTrend(data);
+                renderAlerts(data.alerts || []);
+                renderCharts(data.series);
+            } catch (err) {
+                body.innerHTML = '<div class="alert alert-danger">加载失败</div>';
+            }
+        }
+
+        function renderAlerts(alerts) {
+            const div = document.getElementById('trendAlerts');
+            if (!alerts.length) return;
+            let html = '<div class="mb-3">';
+            alerts.forEach(function (a) {
+                const cls = a.type === 'improvement' ? 'alert-success' : 'alert-warning';
+                const icon = a.type === 'improvement' ? 'fa-arrow-up' : 'fa-arrow-down';
+                html += '<div class="alert ' + cls + ' alert-sm py-2 mb-1"><i class="fas ' + icon + ' me-2"></i>' + escapeHtml(a.message) + '</div>';
+            });
+            html += '</div>';
+            div.innerHTML = html;
+        }
+
+        function renderTrend(data) {
+            const body = document.getElementById('trendBody');
+            const trend = data.trend || {};
+            const keys = Object.keys(trend);
+            if (!keys.length) {
+                body.innerHTML = '<div class="text-center text-muted py-4">暂无趋势数据</div>';
+                return;
+            }
+
+            let html = '<div class="table-responsive"><table class="table table-sm table-bordered align-middle" style="font-size: 0.85rem;">';
+            html += '<thead class="table-light"><tr><th>指标</th><th>起始值</th><th>最新值</th><th>变化</th><th>变化率</th><th>趋势</th><th>显著</th></tr></thead><tbody>';
+
+            keys.forEach(function (key) {
+                const t = trend[key];
+                const dirIcon = t.direction === 'improved' ? '<i class="fas fa-arrow-up text-success"></i>' :
+                                t.direction === 'worsened' ? '<i class="fas fa-arrow-down text-danger"></i>' :
+                                '<i class="fas fa-minus text-muted"></i>';
+                const dirLabel = t.direction === 'improved' ? '改善' : t.direction === 'worsened' ? '下降' : '中性';
+                const sigBadge = t.significant ? '<span class="badge bg-warning text-dark">显著</span>' : '<span class="text-muted">-</span>';
+                const deltaStr = (t.delta > 0 ? '+' : '') + t.delta + (t.unit ? ' ' + t.unit : '');
+                const pctStr = t.pct_change != null ? (t.pct_change > 0 ? '+' : '') + t.pct_change + '%' : '-';
+
+                html += '<tr>' +
+                    '<td class="fw-semibold">' + escapeHtml(t.label) + '</td>' +
+                    '<td>' + t.first + '</td>' +
+                    '<td>' + t.last + '</td>' +
+                    '<td class="' + (t.direction === 'improved' ? 'text-success' : t.direction === 'worsened' ? 'text-danger' : 'text-muted') + ' fw-semibold">' + deltaStr + '</td>' +
+                    '<td>' + pctStr + '</td>' +
+                    '<td>' + dirIcon + ' ' + dirLabel + '</td>' +
+                    '<td>' + sigBadge + '</td>' +
+                    '</tr>';
+            });
+            html += '</tbody></table></div>';
+            html += '<p class="text-muted small mb-0">共 ' + data.total_records + ' 次分析记录</p>';
+            body.innerHTML = html;
+        }
+
+        function renderCharts(series) {
+            const card = document.getElementById('chartCard');
+            const row = document.getElementById('chartRow');
+            if (!series || !series.dates || series.dates.length < 2) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+            row.innerHTML = '';
+
+            const chartMetrics = ['score', 'cadence', 'avg_shin', 'vertical_oscillation'];
+            chartMetrics.forEach(function (key) {
+                const values = series.series[key] || [];
+                const validValues = values.filter(function (v) { return v != null; });
+                if (validValues.length < 2) return;
+
+                const col = document.createElement('div');
+                col.className = 'col-md-6';
+                col.innerHTML = buildMiniChart(key, series.dates, values);
+                row.appendChild(col);
+            });
+        }
+
+        function buildMiniChart(key, dates, values) {
+            const labels = {
+                score: '综合得分', cadence: '步频 (spm)',
+                avg_shin: '小腿角度 (°)', vertical_oscillation: '垂直振荡 (%腿长)',
+            };
+            const label = labels[key] || key;
+            const valid = values.filter(function (v) { return v != null; });
+            const min = Math.min.apply(null, valid);
+            const max = Math.max.apply(null, valid);
+            const range = max - min || 1;
+
+            let svg = '<svg viewBox="0 0 300 80" style="width:100%;height:80px;">';
+            // Grid
+            svg += '<line x1="0" y1="10" x2="300" y2="10" stroke="#eee" stroke-width="1"/>';
+            svg += '<line x1="0" y1="40" x2="300" y2="40" stroke="#eee" stroke-width="1"/>';
+            svg += '<line x1="0" y1="70" x2="300" y2="70" stroke="#eee" stroke-width="1"/>';
+
+            // Line
+            const n = values.length;
+            let points = [];
+            values.forEach(function (v, i) {
+                if (v == null) return;
+                const x = (i / (n - 1)) * 280 + 10;
+                const y = 70 - ((v - min) / range) * 55;
+                points.push(x + ',' + y);
+            });
+            if (points.length >= 2) {
+                svg += '<polyline points="' + points.join(' ') + '" fill="none" stroke="#3498db" stroke-width="2"/>';
+            }
+            // Dots
+            values.forEach(function (v, i) {
+                if (v == null) return;
+                const x = (i / (n - 1)) * 280 + 10;
+                const y = 70 - ((v - min) / range) * 55;
+                svg += '<circle cx="' + x + '" cy="' + y + '" r="3" fill="#3498db"/>';
+            });
+            svg += '</svg>';
+
+            return '<div class="border rounded p-2 mb-2">' +
+                '<div class="d-flex justify-content-between mb-1">' +
+                '<span class="fw-semibold" style="font-size:0.85rem;">' + label + '</span>' +
+                '<span class="text-muted" style="font-size:0.8rem;">' + valid[0] + ' → ' + valid[valid.length - 1] + '</span>' +
+                '</div>' + svg + '</div>';
+        }
+
+        async function loadCompareOptions() {
+            try {
+                const resp = await apiFetch('/api/history?limit=30');
+                const data = await resp.json();
+                if (!resp.ok) return;
+                allRecords = data.records || [];
+                const selA = document.getElementById('compareA');
+                const selB = document.getElementById('compareB');
+                selA.innerHTML = '';
+                selB.innerHTML = '';
+                allRecords.forEach(function (r, i) {
+                    const label = (r.created_at || '').split(' ')[0] + ' · ' + (r.score != null ? r.score + '分' : '-');
+                    const optA = new Option(label, r.id);
+                    const optB = new Option(label, r.id);
+                    selA.add(optA);
+                    selB.add(optB);
+                });
+                // Default: oldest vs newest
+                if (allRecords.length >= 2) {
+                    selA.value = allRecords[allRecords.length - 1].id;
+                    selB.value = allRecords[0].id;
+                }
+            } catch (err) { /* ignore */ }
+        }
+
+        async function doCompareAb() {
+            const idA = document.getElementById('compareA').value;
+            const idB = document.getElementById('compareB').value;
+            if (!idA || !idB) { alert('请选择两条记录'); return; }
+            const resultDiv = document.getElementById('compareAbResult');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<div class="text-center text-muted py-3">对比计算中...</div>';
+
+            try {
+                const resp = await apiFetch('/api/trend/compare-ab', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ record_a: parseInt(idA), record_b: parseInt(idB) })
+                });
+                const data = await resp.json();
+                if (!resp.ok) { resultDiv.innerHTML = '<div class="alert alert-danger">' + escapeHtml(data.error || '对比失败') + '</div>'; return; }
+                renderCompareAb(data.comparison);
+            } catch (err) {
+                resultDiv.innerHTML = '<div class="alert alert-danger">对比失败</div>';
+            }
+        }
+
+        function renderCompareAb(cmp) {
+            const div = document.getElementById('compareAbResult');
+            let html = '<div class="alert alert-info py-2"><i class="fas fa-info-circle me-2"></i>' + escapeHtml(cmp.summary) + '</div>';
+            html += '<div class="table-responsive"><table class="table table-sm table-bordered" style="font-size:0.85rem;">';
+            html += '<thead class="table-light"><tr><th>指标</th><th>记录 A</th><th>记录 B</th><th>变化</th><th>趋势</th></tr></thead><tbody>';
+            Object.keys(cmp.metrics).forEach(function (key) {
+                const m = cmp.metrics[key];
+                const dirIcon = m.direction === 'improved' ? '<i class="fas fa-arrow-up text-success"></i>' :
+                                m.direction === 'worsened' ? '<i class="fas fa-arrow-down text-danger"></i>' :
+                                '<i class="fas fa-minus text-muted"></i>';
+                const deltaStr = (m.delta > 0 ? '+' : '') + m.delta + (m.unit ? ' ' + m.unit : '');
+                html += '<tr><td class="fw-semibold">' + escapeHtml(m.label) + '</td>' +
+                    '<td>' + m.a + '</td><td>' + m.b + '</td>' +
+                    '<td class="' + (m.direction === 'improved' ? 'text-success' : m.direction === 'worsened' ? 'text-danger' : 'text-muted') + '">' + deltaStr + '</td>' +
+                    '<td>' + dirIcon + '</td></tr>';
+            });
+            html += '</tbody></table></div>';
+            div.innerHTML = html;
+        }
+
+        async function loadProgress() {
+            try {
+                const resp = await apiFetch('/api/trend/progress');
+                const data = await resp.json();
+                if (!resp.ok || data.status === 'empty') return;
+                const p = data.progress;
+                if (!p) return;
+                const card = document.getElementById('progressCard');
+                card.style.display = 'block';
+                let html = '<div class="row g-3">';
+                html += '<div class="col-md-3"><div class="metric-item"><span class="metric-label">分析次数:</span><span class="metric-value">' + p.total_analyses + '</span></div></div>';
+                html += '<div class="col-md-3"><div class="metric-item"><span class="metric-label">首次分析:</span><span class="metric-value">' + escapeHtml(p.first_date || '-') + '</span></div></div>';
+                html += '<div class="col-md-3"><div class="metric-item"><span class="metric-label">最近分析:</span><span class="metric-value">' + escapeHtml(p.last_date || '-') + '</span></div></div>';
+                html += '<div class="col-md-3"><div class="metric-item"><span class="metric-label">得分变化:</span><span class="metric-value" style="color:' + (!Number.isFinite(p.score_change) ? '#6c757d' : (p.score_change >= 0 ? '#080' : '#c00')) + ';">' + (Number.isFinite(p.score_change) ? (p.score_change >= 0 ? '+' : '') + p.score_change : '未评分／不可比较') + '</span></div></div>';
+                html += '</div>';
+                if (p.improvements.length) {
+                    html += '<div class="mt-2"><span class="text-success small">改善:</span> ';
+                    p.improvements.forEach(function (s) { html += '<span class="badge bg-success me-1">' + escapeHtml(s) + '</span>'; });
+                    html += '</div>';
+                }
+                if (p.regressions.length) {
+                    html += '<div class="mt-1"><span class="text-danger small">下降:</span> ';
+                    p.regressions.forEach(function (s) { html += '<span class="badge bg-danger me-1">' + escapeHtml(s) + '</span>'; });
+                    html += '</div>';
+                }
+                document.getElementById('progressBody').innerHTML = html;
+            } catch (err) { /* ignore */ }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>摄像头预览 - PoseRun 跑姿分析系统</title>
+    <link href="/vendor/bootstrap-5.3.0/bootstrap.min.css" rel="stylesheet">
+    <link href="/common.css" rel="stylesheet">
+</head>
+<body>
+    <script>window.PAGE = 'camera';</script>
+    <div class="container-fluid">
+        <div class="row justify-content-center">
+            <div class="col-md-10 col-xl-8 py-4">
+                <div class="card">
+                    <div class="card-header"><h5 class="mb-0"><i class="fas fa-video me-2"></i>摄像头预览</h5></div>
+                    <div class="card-body">
+                        <p class="text-muted">检查设备与取景，不进行实时跑姿分析、录制或截图。仅在点击启动后请求摄像头权限，不请求麦克风。</p>
+                        <div class="alert alert-secondary">需要分析跑姿？请使用已拍摄的视频。<a class="alert-link" href="/upload.html">前往上传视频</a></div>
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <button type="button" class="btn btn-primary" id="startCameraBtn"><i class="fas fa-play me-2"></i>启动摄像头预览</button>
+                            <button type="button" class="btn btn-outline-danger" id="stopCameraBtn" style="display: none;"><i class="fas fa-stop me-2"></i>停止预览 / 取消启动</button>
+                        </div>
+                        <div id="cameraError" class="alert alert-danger" role="alert" style="display: none;"></div>
+                        <div class="video-container bg-dark rounded overflow-hidden" id="cameraContainer" style="display: none;">
+                            <video id="cameraVideo" class="w-100" autoplay playsinline muted aria-label="本机摄像头预览"></video>
+                        </div>
+                        <p id="cameraStatus" class="text-muted mt-3 mb-0" role="status" aria-live="polite">摄像头尚未启动。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="/common.js"></script>
+    <script src="/icons.js"></script>
+    <script>
+        let cameraStream = null;
+        let cameraPending = false;
+        let cameraRequest = 0;
+        let cameraLeaving = false;
+        const startCameraBtn = document.getElementById('startCameraBtn');
+        const stopCameraBtn = document.getElementById('stopCameraBtn');
+        const cameraVideo = document.getElementById('cameraVideo');
+        const cameraContainer = document.getElementById('cameraContainer');
+        const cameraStatus = document.getElementById('cameraStatus');
+        const cameraError = document.getElementById('cameraError');
+
+        function updateCameraControls() {
+            startCameraBtn.disabled = cameraPending || !!cameraStream || cameraLeaving;
+            stopCameraBtn.style.display = cameraPending || cameraStream ? 'inline-block' : 'none';
+        }
+        function releaseStream(stream) {
+            if (stream) stream.getTracks().forEach(track => track.stop());
+        }
+        function showCameraError(error) {
+            const messages = {
+                NotAllowedError: '摄像头权限被拒绝，请检查浏览器站点权限后重试。',
+                SecurityError: '浏览器安全策略阻止了摄像头，请检查站点权限和安全连接。',
+                NotFoundError: '未检测到摄像头，请检查设备连接后重试。',
+                DevicesNotFoundError: '未检测到摄像头，请检查设备连接后重试。',
+                NotReadableError: '摄像头无法读取，可能被其他应用占用，请关闭占用后重试。',
+                OverconstrainedError: '设备不支持请求的预览设置，请更换设备后重试。'
+            };
+            cameraError.textContent = messages[error && error.name] || '无法启动摄像头预览，请检查设备和浏览器设置后重试。';
+            cameraError.style.display = 'block';
+        }
+        async function startCamera() {
+            if (cameraPending || cameraStream || cameraLeaving) return;
+            cameraError.style.display = 'none';
+            cameraError.textContent = '';
+            if (!window.isSecureContext) {
+                cameraError.textContent = '摄像头需要安全上下文。请使用管理员提供的有效 HTTPS 地址，或在本机通过 localhost 访问；不要忽略证书警告。';
+                cameraError.style.display = 'block';
+                return;
+            }
+            if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+                cameraError.textContent = '当前浏览器不支持摄像头访问，请使用支持此功能的浏览器。';
+                cameraError.style.display = 'block';
+                return;
+            }
+            const request = ++cameraRequest;
+            cameraPending = true;
+            cameraStatus.textContent = '等待摄像头权限与设备响应，可随时取消。';
+            updateCameraControls();
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+                if (request !== cameraRequest || cameraLeaving) {
+                    releaseStream(stream);
+                    return;
+                }
+                cameraStream = stream;
+                cameraVideo.srcObject = stream;
+                cameraContainer.style.display = 'block';
+                cameraStatus.textContent = '摄像头预览已开启；未进行分析、录制或截图。';
+            } catch (error) {
+                if (request === cameraRequest && !cameraLeaving) {
+                    releaseStream(cameraStream);
+                    cameraStream = null;
+                    cameraVideo.srcObject = null;
+                    cameraContainer.style.display = 'none';
+                    showCameraError(error);
+                    cameraStatus.textContent = '摄像头未启动，可检查设置后重试。';
+                }
+            } finally {
+                // getUserMedia 无取消 API：未决请求结束前不允许重复打开。
+                cameraPending = false;
+                if (request !== cameraRequest && !cameraLeaving) {
+                    cameraStatus.textContent = '摄像头已停止，可重新启动预览。';
+                }
+                updateCameraControls();
+            }
+        }
+        function stopCamera() {
+            ++cameraRequest;
+            releaseStream(cameraStream);
+            cameraStream = null;
+            cameraVideo.srcObject = null;
+            cameraContainer.style.display = 'none';
+            cameraError.style.display = 'none';
+            cameraStatus.textContent = cameraPending ? '已取消预览，等待设备请求结束；迟到的视频流将立即关闭。' : '摄像头已停止。';
+            updateCameraControls();
+        }
+        startCameraBtn.addEventListener('click', startCamera);
+        stopCameraBtn.addEventListener('click', stopCamera);
+        function leaveCameraPage() {
+            cameraLeaving = true;
+            stopCamera();
+        }
+        window.addEventListener('pagehide', leaveCameraPage);
+        window.addEventListener('beforeunload', leaveCameraPage);
+        window.addEventListener('pageshow', function () {
+            cameraLeaving = false;
+            updateCameraControls();
+        });
+    </script>
+</body>
+</html>

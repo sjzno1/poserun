@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>跑者画像 - PoseRun 跑姿分析系统</title>
+    <link href="/vendor/bootstrap-5.3.0/bootstrap.min.css" rel="stylesheet">
+    <link href="/common.css" rel="stylesheet">
+</head>
+<body>
+    <script>window.PAGE = 'profile';</script>
+
+    <div class="container-fluid">
+        <div class="row justify-content-center">
+            <div class="col-md-11 py-4">
+
+                <!-- 画像表单 -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-user-edit me-2"></i>跑者画像</h5>
+                        <span class="text-white small" id="profileStatus"></span>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">
+                            记录身体参数与训练背景，为测量提供上下文。参考区间尚未独立验证，不用于技术评级、伤病诊断或自动训练处方。
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">身高 (cm)</label>
+                                <input type="number" class="form-control" id="heightCm" placeholder="175" min="120" max="220" step="0.5">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">体重 (kg)</label>
+                                <input type="number" class="form-control" id="weightKg" placeholder="70" min="30" max="150" step="0.5">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">腿长 (cm)</label>
+                                <input type="number" class="form-control" id="legLengthCm" placeholder="85" min="40" max="120" step="0.5">
+                                <div class="form-text">可选，仅作背景资料；无地面标定时不输出米制步幅</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">训练水平</label>
+                                <select class="form-select" id="trainingLevel">
+                                    <option value="beginner">新手（<1年）</option>
+                                    <option value="intermediate" selected>进阶（1-3年）</option>
+                                    <option value="advanced">高级（3-5年）</option>
+                                    <option value="elite">精英（5年+）</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">周跑量 (km)</label>
+                                <input type="number" class="form-control" id="weeklyKm" placeholder="40" min="0" max="300" step="1">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">跑步年限</label>
+                                <input type="number" class="form-control" id="yearsRunning" placeholder="3" min="0" max="50" step="0.5">
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label">伤病历史（可多选）</label>
+                                <div class="d-flex flex-wrap gap-2" id="injuryList">
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="inj_knee" value="膝痛">
+                                        <label class="form-check-label" for="inj_knee">膝痛</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="inj_achilles" value="跟腱炎">
+                                        <label class="form-check-label" for="inj_achilles">跟腱炎</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="inj_plantar" value="足底筋膜炎">
+                                        <label class="form-check-label" for="inj_plantar">足底筋膜炎</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="inj_itbs" value="髂胫束综合征">
+                                        <label class="form-check-label" for="inj_itbs">髂胫束综合征</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="inj_hip" value="髋关节痛">
+                                        <label class="form-check-label" for="inj_hip">髋关节痛</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="inj_shin" value="小腿胫骨应力性骨折">
+                                        <label class="form-check-label" for="inj_shin">胫骨骨折</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">目标</label>
+                                <select class="form-select" id="goal">
+                                    <option value="injury_prevention" selected>减伤优先</option>
+                                    <option value="efficiency">效率优先</option>
+                                    <option value="performance">成绩提升</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">备注</label>
+                                <input type="text" class="form-control" id="notes" placeholder="其他需要说明的信息" maxlength="200">
+                            </div>
+                        </div>
+                        <div class="mt-3 d-flex gap-2">
+                            <button class="btn btn-primary" id="saveProfileBtn"><i class="fas fa-save me-2"></i>保存画像</button>
+                            <button class="btn btn-outline-secondary" id="resetProfileBtn"><i class="fas fa-undo me-2"></i>重置</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 个性化参考范围 -->
+                <div class="card mt-3" id="rangesCard" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-ruler me-2"></i>实验参考区间（未验证）</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-2">以下为实验性参考数据，不是统一正常标准，不构成评分或医学建议：</p>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered" id="rangesTable">
+                                <thead class="table-light">
+                                    <tr><th>指标</th><th>参考区间（未验证）</th><th>候选区间（非评级）</th><th>重点关注</th></tr>
+                                </thead>
+                                <tbody id="rangesTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 画像摘要 -->
+                <div class="card mt-3" id="summaryCard" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-info-circle me-2"></i>画像摘要</h5>
+                    </div>
+                    <div class="card-body" id="summaryBody"></div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="/common.js"></script>
+    <script src="/icons.js"></script>
+    <script>
+        const INJURY_IDS = ['inj_knee', 'inj_achilles', 'inj_plantar', 'inj_itbs', 'inj_hip', 'inj_shin'];
+        const RANGE_LABELS = {
+            cadence: '步频 (spm)',
+            vertical_oscillation: '垂直振荡 (%腿长)',
+            ground_contact: '着地时间 (ms)',
+            stride_length: '步幅 (m)',
+            body_lean: '前倾角度 (°)',
+            shin_angle: '小腿角度 (°)',
+            knee_flexion: '膝盖角度 (°)',
+        };
+
+        function onAuthReady(user) {
+            loadProfile();
+        }
+
+        async function loadProfile() {
+            try {
+                const resp = await apiFetch('/api/profile');
+                const data = await resp.json();
+                if (!resp.ok) return;
+                if (data.status === 'empty' || !data.profile) {
+                    document.getElementById('profileStatus').textContent = '尚未设置画像';
+                    return;
+                }
+                const p = data.profile;
+                document.getElementById('heightCm').value = p.height_cm ?? '';
+                document.getElementById('weightKg').value = p.weight_kg ?? '';
+                document.getElementById('legLengthCm').value = p.leg_length_cm ?? '';
+                document.getElementById('trainingLevel').value = p.training_level || 'intermediate';
+                document.getElementById('weeklyKm').value = p.weekly_km ?? '';
+                document.getElementById('yearsRunning').value = p.years_running ?? '';
+                document.getElementById('goal').value = p.goal || 'injury_prevention';
+                document.getElementById('notes').value = p.notes || '';
+
+                // 伤病复选框
+                const injuries = p.injury_history || [];
+                INJURY_IDS.forEach(function (id) {
+                    const el = document.getElementById(id);
+                    if (el) el.checked = injuries.includes(el.value);
+                });
+
+                document.getElementById('profileStatus').textContent = '已设置 · ' + (p.training_level_label || '');
+                renderSummary(p);
+                loadRanges();
+            } catch (err) { /* 401 handled */ }
+        }
+
+        function renderSummary(p) {
+            const card = document.getElementById('summaryCard');
+            card.style.display = 'block';
+            let html = '<div class="row g-3">';
+            html += '<div class="col-md-3"><div class="metric-item"><span class="metric-label">训练水平:</span><span class="metric-value">' + escapeHtml(p.training_level_label || '-') + '</span></div></div>';
+            html += '<div class="col-md-3"><div class="metric-item"><span class="metric-label">周跑量:</span><span class="metric-value">' + (p.weekly_km != null ? p.weekly_km + ' km' : '-') + '</span></div></div>';
+            html += '<div class="col-md-3"><div class="metric-item"><span class="metric-label">跑步年限:</span><span class="metric-value">' + (p.years_running != null ? p.years_running + ' 年' : '-') + '</span></div></div>';
+            html += '<div class="col-md-3"><div class="metric-item"><span class="metric-label">目标:</span><span class="metric-value">' + escapeHtml(p.goal_label || '-') + '</span></div></div>';
+            html += '</div>';
+            if (p.injury_history && p.injury_history.length) {
+                html += '<div class="mt-2"><span class="text-muted small">伤病历史:</span> ';
+                p.injury_history.forEach(function (inj) {
+                    html += '<span class="badge bg-warning text-dark me-1">' + escapeHtml(inj) + '</span>';
+                });
+                html += '</div>';
+            }
+            if (p.focus_metrics && p.focus_metrics.length) {
+                html += '<div class="mt-2"><span class="text-muted small">重点关注指标:</span> ';
+                p.focus_metrics.forEach(function (m) {
+                    html += '<span class="badge bg-info text-dark me-1">' + escapeHtml(RANGE_LABELS[m] || m) + '</span>';
+                });
+                html += '</div>';
+            }
+            document.getElementById('summaryBody').innerHTML = html;
+        }
+
+        async function loadRanges() {
+            try {
+                const resp = await apiFetch('/api/profile/ranges');
+                const data = await resp.json();
+                if (!resp.ok) return;
+                const ranges = data.ranges || {};
+                const focus = data.focus_metrics || [];
+                const tbody = document.getElementById('rangesTbody');
+                tbody.innerHTML = '';
+                Object.keys(RANGE_LABELS).forEach(function (key) {
+                    const r = ranges[key];
+                    if (!r) return;
+                    const isFocus = focus.includes(key);
+                    const tr = document.createElement('tr');
+                    if (isFocus) tr.style.background = 'rgba(255,193,7,0.08)';
+                    tr.innerHTML =
+                        '<td class="fw-semibold">' + RANGE_LABELS[key] + (isFocus ? ' <i class="fas fa-exclamation-triangle text-warning ms-1"></i>' : '') + '</td>' +
+                        '<td>' + r.min + ' ~ ' + r.max + '</td>' +
+                        '<td>' + r.excellent_min + ' ~ ' + r.excellent_max + '</td>' +
+                        '<td>' + (isFocus ? '<span class="badge bg-warning text-dark">重点关注</span>' : '<span class="text-muted">-</span>') + '</td>';
+                    tbody.appendChild(tr);
+                });
+                document.getElementById('rangesCard').style.display = 'block';
+            } catch (err) { /* ignore */ }
+        }
+
+        function nullableNumber(id) {
+            const value = document.getElementById(id).value.trim();
+            const number = value === '' ? NaN : Number(value);
+            return Number.isFinite(number) ? number : null;
+        }
+
+        function collectForm() {
+            const injuries = [];
+            INJURY_IDS.forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el && el.checked) injuries.push(el.value);
+            });
+            return {
+                height_cm: nullableNumber('heightCm'),
+                weight_kg: nullableNumber('weightKg'),
+                leg_length_cm: nullableNumber('legLengthCm'),
+                training_level: document.getElementById('trainingLevel').value,
+                weekly_km: nullableNumber('weeklyKm'),
+                years_running: nullableNumber('yearsRunning'),
+                injury_history: injuries,
+                goal: document.getElementById('goal').value,
+                notes: document.getElementById('notes').value.trim(),
+            };
+        }
+
+        document.getElementById('saveProfileBtn').addEventListener('click', async function () {
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>保存中...';
+            try {
+                const resp = await apiFetch('/api/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(collectForm())
+                });
+                const data = await resp.json();
+                if (!resp.ok) { alert(data.error || '保存失败'); return; }
+                document.getElementById('profileStatus').textContent = '已保存';
+                renderSummary(data.profile);
+                loadRanges();
+            } catch (err) {
+                alert('保存失败，请重试');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-save me-2"></i>保存画像';
+            }
+        });
+
+        document.getElementById('resetProfileBtn').addEventListener('click', function () {
+            document.getElementById('heightCm').value = '';
+            document.getElementById('weightKg').value = '';
+            document.getElementById('legLengthCm').value = '';
+            document.getElementById('trainingLevel').value = 'intermediate';
+            document.getElementById('weeklyKm').value = '';
+            document.getElementById('yearsRunning').value = '';
+            document.getElementById('goal').value = 'injury_prevention';
+            document.getElementById('notes').value = '';
+            INJURY_IDS.forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) el.checked = false;
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>训练联动 - PoseRun 跑姿分析系统</title>
+    <link href="/vendor/bootstrap-5.3.0/bootstrap.min.css" rel="stylesheet">
+    <link href="/common.css" rel="stylesheet">
+</head>
+<body>
+    <script>window.PAGE = 'training';</script>
+    <div class="container-fluid">
+        <div class="row justify-content-center">
+            <div class="col-md-11 py-4">
+                <div class="card">
+                    <div class="card-header d-flex flex-wrap gap-3 justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-link me-2"></i>训练联动</h5>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-sm btn-primary" id="generateSessionBtn"><i class="fas fa-link me-2"></i>检查最近分析记录</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshSessionBtn"><i class="fas fa-sync me-2"></i>刷新</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">训练建议需要经验证的测量证据。当前系统不据未经验证的跑姿结果补充训练处方；记录存在不代表已生成有效训练方案。</p>
+                        <div id="sessionAlerts" role="status" aria-live="polite"></div>
+                        <div id="sessionBody" aria-busy="false"><div class="text-center text-muted py-4">登录后检查最近分析记录。</div></div>
+                        <div class="d-flex flex-wrap gap-3 mt-3"><a href="/upload.html"><i class="fas fa-upload me-1"></i>上传跑步视频</a><a href="/history.html">查看分析记录</a></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="/common.js"></script>
+    <script src="/icons.js"></script>
+    <script>
+        let currentSession = null;
+        let sessionBusy = false;
+        const generateBtn = document.getElementById('generateSessionBtn');
+        const refreshBtn = document.getElementById('refreshSessionBtn');
+        const sessionBody = document.getElementById('sessionBody');
+        const sessionAlerts = document.getElementById('sessionAlerts');
+
+        function onAuthReady(user) { return loadSession(); }
+        generateBtn.addEventListener('click', generateSession);
+        refreshBtn.addEventListener('click', loadSession);
+
+        function setSessionBusy(busy) {
+            sessionBusy = busy;
+            generateBtn.disabled = busy;
+            refreshBtn.disabled = busy;
+            generateBtn.innerHTML = busy
+                ? '<i class="fas fa-spinner fa-spin me-2"></i>检查中…'
+                : '<i class="fas fa-link me-2"></i>检查最近分析记录';
+            sessionBody.setAttribute('aria-busy', String(busy));
+        }
+        function showNoRecords() {
+            currentSession = null;
+            sessionAlerts.innerHTML = '<div class="alert alert-secondary">暂无分析记录</div>';
+            sessionBody.innerHTML = '<div class="text-muted py-3">请先上传并分析一段跑步视频。即使完成分析，证据不足时也不会提供训练处方。</div>';
+        }
+        async function loadSession() {
+            if (sessionBusy) return;
+            setSessionBusy(true);
+            currentSession = null;
+            sessionAlerts.innerHTML = '';
+            sessionBody.innerHTML = '<div class="text-muted py-3">正在检查最近分析记录…</div>';
+            try {
+                const historyResp = await apiFetch('/api/history?limit=1');
+                const history = await historyResp.json();
+                if (!historyResp.ok) throw new Error(history && history.error || '分析记录加载失败');
+                if (!history || !Array.isArray(history.records)) throw new Error('分析记录响应格式异常');
+                if (!history.records.length) {
+                    showNoRecords();
+                    return;
+                }
+                const record = history.records[0];
+                if (!record || record.id == null) throw new Error('分析记录缺少标识');
+                const resp = await apiFetch('/api/training/session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ record_id: record.id })
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data && data.error || '训练联动检查失败');
+                if (!data || !data.session || typeof data.session !== 'object' || Array.isArray(data.session)) {
+                    throw new Error('训练联动响应格式异常');
+                }
+                currentSession = data.session;
+                renderSession(currentSession);
+            } catch (error) {
+                currentSession = null;
+                sessionAlerts.innerHTML = '<div class="alert alert-danger">加载失败：' + escapeHtml(error && error.message || '网络或服务异常') + '</div>';
+                sessionBody.innerHTML = '<div class="text-muted py-3">本次未能检查训练联动状态。可点击“刷新”重试；此错误不代表没有分析记录。</div>';
+            } finally {
+                setSessionBusy(false);
+            }
+        }
+        function generateSession() { return loadSession(); }
+
+        function renderSession(session) {
+            // 现有 API 没有经验证训练证据的契约。包括旧会话在内，均不把返回的处方当作已验证建议。
+            sessionAlerts.innerHTML = '<div class="alert alert-secondary"><i class="fas fa-info-circle me-2"></i>证据不足：尚不能支持个性化训练建议，未生成可采用的训练方案。</div>';
+            let html = '<p class="text-muted">已读取分析记录；测量与技术判断尚缺经验证的证据。以下建议保持为空，不表示跑姿正常，也不表示无需训练。</p>';
+            html += '<div class="row g-3">';
+            ['弱点识别', '技术练习', '力量训练', '每周训练安排'].forEach(function (title) {
+                html += '<div class="col-md-6"><div class="border rounded p-3 h-100"><h6>' + title + '</h6><p class="text-muted mb-0">暂无可支持的建议（证据不足）</p></div></div>';
+            });
+            html += '</div>';
+            // 只展示安全门控返回的说明；不展示旧会话可能携带的训练内容。
+            if (session.status === 'insufficient_evidence' && Array.isArray(session.notes) && session.notes.length) {
+                html += '<h6 class="mt-3">证据说明</h6>';
+                session.notes.filter(function (note) { return typeof note === 'string' && note.trim(); }).forEach(function (note) {
+                    html += '<p class="text-muted mb-1">' + escapeHtml(note) + '</p>';
+                });
+            }
+            sessionBody.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

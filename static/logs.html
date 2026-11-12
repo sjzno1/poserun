@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>操作日志 - PoseRun 跑姿分析系统</title>
+    <link href="/vendor/bootstrap-5.3.0/bootstrap.min.css" rel="stylesheet">
+    <link href="/common.css" rel="stylesheet">
+</head>
+<body>
+    <script>window.PAGE = 'logs';</script>
+
+    <div class="container-fluid">
+        <!-- 非管理员提示 -->
+        <div class="row justify-content-center" id="noAccessRow">
+            <div class="col-md-8 py-4">
+                <div class="card">
+                    <div class="card-body text-center py-5 empty-state">
+                        <i class="fas fa-user-lock"></i>
+                        <h5 class="mt-3">无访问权限</h5>
+                        <p class="text-muted">操作日志仅对管理员开放。</p>
+                        <a class="btn btn-primary" href="/">返回首页</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作日志（仅管理员可见） -->
+        <div class="row justify-content-center" id="logsRow" style="display: none;">
+            <div class="col-md-12 py-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h5><i class="fas fa-list-alt me-2"></i>操作日志</h5>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <select class="form-select form-select-sm" id="actionFilter" style="width: auto;">
+                                <option value="">全部操作</option>
+                            </select>
+                            <input type="search" class="form-control form-control-sm" id="userFilterInput"
+                                   placeholder="按用户筛选" style="max-width: 180px;">
+                            <button class="btn btn-outline-primary btn-sm" id="refreshBtn">
+                                <i class="fas fa-sync me-1"></i>刷新
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">
+                            记录登录/注册、视频上传、分析、报告下载、删除、人员管理与备份等关键操作（保留最近 2000 条）。
+                        </p>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle" style="font-size: 0.88rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 150px;">时间</th>
+                                        <th style="width: 130px;">操作</th>
+                                        <th style="width: 150px;">用户</th>
+                                        <th>详情</th>
+                                        <th style="width: 110px;">IP</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="logsTbody">
+                                    <tr><td colspan="5" class="text-center text-muted py-4">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mt-2">
+                            <span class="text-muted small" id="logCount"></span>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-primary btn-xs" id="prevPageBtn">上一页</button>
+                                <button class="btn btn-outline-primary btn-xs" id="nextPageBtn">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="/common.js"></script>
+    <script src="/icons.js"></script>
+    <script>
+        const PAGE_SIZE = 50;
+        let page = 0;
+        let total = 0;
+        let filterTimer = null;
+
+        // 操作类型 -> 中文标签
+        const ACTION_LABELS = {
+            login: '登录',
+            login_failed: '登录失败',
+            logout: '登出',
+            register: '注册',
+            register_failed: '注册失败',
+            upload: '上传视频',
+            analyze: '分析完成',
+            analyze_failed: '分析失败',
+            analyze_rejected: '主体确认未通过',
+            batch: '批量处理',
+            report_download: '下载报告',
+            history_delete: '删除记录',
+            backup: '手动备份',
+            backup_auto: '自动备份',
+            profile_update: '修改资料',
+            profile_save: '保存跑者画像',
+            export_csv: '导出 CSV',
+            export_json: '导出 JSON',
+            password_change: '修改密码',
+            account_delete: '注销账号',
+            user_update: '用户变更',
+            user_password_reset: '重置密码',
+            user_delete: '删除用户',
+            '401_denied': '未授权访问',
+            '403_forbidden': '越权访问',
+        };
+
+        function actionLabel(a) {
+            return ACTION_LABELS[a] || a;
+        }
+
+        function actionBadge(a) {
+            const isFail = /failed|denied|forbidden/.test(a);
+            const isDanger = /delete|reset|403/.test(a);
+            const cls = isFail ? 'text-danger' : (isDanger ? 'text-warning' : 'text-success');
+            return '<span class="' + cls + ' fw-semibold">' + escapeHtml(actionLabel(a)) + '</span>';
+        }
+
+        function onAuthReady(user) {
+            const isAdmin = user && user.role === 'admin';
+            document.getElementById('noAccessRow').style.display = isAdmin ? 'none' : '';
+            document.getElementById('logsRow').style.display = isAdmin ? '' : 'none';
+            if (isAdmin) { loadActions(); loadLogs(); }
+        }
+
+        // 页面加载时，如果已经登录，立即应用认证状态
+        // （解决 common.js 的 applyAuthedUI 可能在 onAuthReady 定义前调用的问题）
+        (function () {
+            const user = authUser;
+            if (user) {
+                onAuthReady(user);
+            }
+        })();
+
+        async function loadActions() {
+            try {
+                const resp = await apiFetch('/api/audit/actions');
+                const data = await resp.json();
+                if (!resp.ok) return;
+                const sel = document.getElementById('actionFilter');
+                const selected = sel.value;
+                sel.innerHTML = '<option value="">全部操作</option>';
+                (data.actions || []).forEach(function (a) {
+                    const opt = document.createElement('option');
+                    opt.value = a.action;
+                    opt.textContent = actionLabel(a.action) + '（' + a.n + '）';
+                    sel.appendChild(opt);
+                });
+                if (Array.from(sel.options).some(o => o.value === selected)) sel.value = selected;
+            } catch (err) { /* 401 已由 apiFetch 处理 */ }
+        }
+
+        async function loadLogs() {
+            const tbody = document.getElementById('logsTbody');
+            const action = document.getElementById('actionFilter').value;
+            const username = document.getElementById('userFilterInput').value.trim();
+            const qs = new URLSearchParams({
+                limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+            });
+            if (action) qs.set('action', action);
+            if (username) qs.set('username', username);
+            try {
+                const resp = await apiFetch('/api/audit?' + qs.toString());
+                const data = await resp.json();
+                if (!resp.ok) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-4">' +
+                        escapeHtml(data.error || '加载失败') + '</td></tr>';
+                    return;
+                }
+                total = data.total || 0;
+                renderLogs(data.events || []);
+            } catch (err) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">加载失败</td></tr>';
+            }
+        }
+
+        function renderLogs(events) {
+            const tbody = document.getElementById('logsTbody');
+            tbody.innerHTML = '';
+            document.getElementById('logCount').textContent = '共 ' + total + ' 条';
+            document.getElementById('prevPageBtn').disabled = page === 0;
+            document.getElementById('nextPageBtn').disabled = (page + 1) * PAGE_SIZE >= total;
+            if (!events.length) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">暂无日志</td></tr>';
+                return;
+            }
+            events.forEach(function (e) {
+                const tr = document.createElement('tr');
+                const who = e.username
+                    ? escapeHtml(e.username) + (e.user_name ? '（' + escapeHtml(e.user_name) + '）' : '')
+                    : '<span class="text-muted">-</span>';
+                const detail = e.detail
+                    ? '<span title="' + escapeHtml(e.detail) + '">' + escapeHtml(
+                        e.detail.length > 60 ? e.detail.slice(0, 60) + '…' : e.detail) + '</span>'
+                    : '<span class="text-muted">-</span>';
+                tr.innerHTML =
+                    '<td class="text-nowrap">' + escapeHtml(e.ts || '') + '</td>' +
+                    '<td>' + actionBadge(e.action) + '</td>' +
+                    '<td>' + who + '</td>' +
+                    '<td>' + detail + '</td>' +
+                    '<td class="text-muted">' + escapeHtml(e.ip || '') + '</td>';
+                tbody.appendChild(tr);
+            });
+        }
+
+        document.getElementById('refreshBtn').addEventListener('click', function () {
+            loadActions();
+            loadLogs();
+        });
+        document.getElementById('actionFilter').addEventListener('change', function () {
+            page = 0;
+            loadLogs();
+        });
+        document.getElementById('userFilterInput').addEventListener('input', function () {
+            clearTimeout(filterTimer);
+            filterTimer = setTimeout(function () { page = 0; loadLogs(); }, 300);
+        });
+        document.getElementById('prevPageBtn').addEventListener('click', function () {
+            if (page > 0) { page--; loadLogs(); }
+        });
+        document.getElementById('nextPageBtn').addEventListener('click', function () {
+            if ((page + 1) * PAGE_SIZE < total) { page++; loadLogs(); }
+        });
+    </script>
+</body>
+</html>

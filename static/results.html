@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分析结果 - PoseRun 跑姿分析系统</title>
+    <link href="/vendor/bootstrap-5.3.0/bootstrap.min.css" rel="stylesheet">
+    <link href="/common.css" rel="stylesheet">
+</head>
+<body>
+    <script>window.PAGE = 'results';</script>
+
+    <div class="container-fluid">
+        <div class="row justify-content-center">
+            <div class="col-md-8 py-4">
+                <!-- 空状态 -->
+                <div class="card" id="emptyCard">
+                    <div class="card-body text-center py-5 empty-state">
+                        <i class="fas fa-chart-line"></i>
+                        <h5 class="mt-3">暂无分析结果</h5>
+                        <p class="text-muted">还没有进行过跑姿分析，先去上传一段跑步视频吧。</p>
+                        <a class="btn btn-primary" href="/upload.html">
+                            <i class="fas fa-upload me-2"></i>去上传视频
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 结果卡片 -->
+                <div class="card" id="resultsCard" style="display: none;">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h5><i class="fas fa-chart-line me-2"></i>分析结果</h5>
+                        <span class="text-white small" id="resultMeta"></span>
+                    </div>
+                    <div class="card-body">
+                        <!-- 综合得分 -->
+                        <div class="score-banner text-center mb-3" id="scoreBanner">
+                            <span class="score-num" id="scoreNum">-</span>
+                            <span class="score-unit" id="scoreUnit">分</span>
+                            <span class="score-grade" id="scoreGrade"></span>
+                        </div>
+
+                        <div id="measurementNotice" class="alert alert-secondary" style="display: none;"></div>
+                        <div id="measurementCoverage" class="small text-muted mb-3" style="display: none;"></div>
+
+                        <!-- 关键帧截图（紧跟得分，视觉主体） -->
+                        <div class="mb-3" id="keyframesWrap" style="display: none;">
+                            <h6 class="text-muted mb-2"><i class="fas fa-camera me-1"></i>关键帧标注截图</h6>
+                            <div class="row g-2" id="keyframesGallery"></div>
+                        </div>
+
+                        <!-- 逐项评分明细 -->
+                        <div id="breakdownWrap" style="display: none;">
+                            <h6 class="text-muted mb-2">逐项评分明细</h6>
+                            <table class="table table-sm table-bordered align-middle" style="font-size: 0.85rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>环节</th>
+                                        <th>分项</th>
+                                        <th>评判结果</th>
+                                        <th style="width: 70px;">得分</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="breakdownBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 核心指标 -->
+                <div class="card mt-3" id="metricsCard" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-tachometer-alt me-2"></i>核心指标</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="metric-item">
+                                    <span class="metric-label">膝盖弯曲角度:</span>
+                                    <span class="metric-value" id="kneeAngle">-</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">小腿角度:</span>
+                                    <span class="metric-value" id="shinAngle">-</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">跨步程度:</span>
+                                    <span class="metric-value" id="strideLevel">-</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">对称性:</span>
+                                    <span class="metric-value" id="symmetryLevel">-</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">身体前倾角度:</span>
+                                    <span class="metric-value" id="bodyLeang">-</span>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-muted"><i class="fas fa-running me-1"></i>步态指标</h6>
+                                <p class="small text-muted">触地相位尚未验证；步频、接地时间等暂不提供，不以零填补。</p>
+                                <div class="row" id="gaitGrid"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 问题与建议 -->
+                <div class="card mt-3" id="adviceCard" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-lightbulb me-2"></i>问题诊断与改进建议</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-danger">主要问题:</h6>
+                                <div id="problemsList"></div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-success">改进建议:</h6>
+                                <div id="suggestionsList"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 马拉松跑姿训练计划 -->
+                <div class="card mt-3" id="trainingPlanCard" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-dumbbell me-2"></i>马拉松跑姿训练计划</h5>
+                    </div>
+                    <div class="card-body" id="trainingPlanBody"></div>
+                </div>
+
+                <!-- 视频质量检查 -->
+                <div class="card mt-3" id="qualityWrap" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-video me-2"></i>视频质量</h5>
+                    </div>
+                    <div class="card-body" id="qualityBody"></div>
+                </div>
+
+                <div class="text-center mt-4" id="downloadRow" style="display: none;">
+                    <button class="btn btn-success" id="downloadReportBtn">
+                        <i class="fas fa-download me-2"></i>下载报告
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="/common.js"></script>
+    <script src="/icons.js"></script>
+    <script>
+        let lastResult = null;
+        try { lastResult = JSON.parse(localStorage.getItem('poserun_last_result') || 'null'); } catch (e) { lastResult = null; }
+
+        // Number.isFinite intentionally rejects null, numeric strings and booleans.
+        function formatMetric(value, digits, unit, scale = 1) {
+            const scaled = Number.isFinite(value) ? value * scale : NaN;
+            return Number.isFinite(scaled) ? scaled.toFixed(digits) + unit : '-';
+        }
+
+        function renderMeasurementEvidence(data, unscored) {
+            const notice = document.getElementById('measurementNotice');
+            notice.innerHTML = '';
+            notice.style.display = unscored ? 'block' : 'none';
+            if (unscored) {
+                const reasons = Array.isArray(data.measurement_limitations) ? data.measurement_limitations.filter(r => typeof r === 'string' && r.trim()) : [];
+                const tracking = data.video_timeline && data.video_timeline.target_tracking;
+                const stopped = tracking && tracking.state === 'lost';
+                const stopText = stopped ? '<p class="mb-2 mt-2">目标跟踪已停止（帧索引 ' +
+                    (Number.isInteger(tracking.first_lost_frame) ? tracking.first_lost_frame : '未知') +
+                    '，从0计）；停止后的帧不参与测量，不自动换人。</p>' : '';
+                const subject = data.video_timeline && data.video_timeline.subject_selection;
+                let subjectText = '';
+                if (subject && subject.mode === 'automatic_primary_runner') {
+                    const index = Number.isInteger(subject.initial_frame_index) && subject.initial_frame_index >= 0 ? subject.initial_frame_index : '未知';
+                    const box = subject.initial_box;
+                    const validBox = Array.isArray(box) && box.length === 4 && box.every(v => Number.isFinite(v) && v >= 0 && v <= 1) && box[0] < box[2] && box[1] < box[3];
+                    subjectText = '<p class="mb-2 mt-2">自动主体选择记录（启发式，非身份认证）：首次选择帧索引 ' + index +
+                        '（从0计）；初始相对框 ' + (validBox ? box.map(v => formatMetric(v, 1, '%', 100)).join(' / ') : '未知') +
+                        '。每段只分析一个主体，允许背景人物；无法确定或跟丢时停止，不自动换人。此记录不代表真实深度或测量精度已验证。</p>';
+                    if ('pose_outlier_frame_indices' in subject || 'measurement_masked_frames' in subject) {
+                        const decoded = data.video_timeline.decoded_frames;
+                        const inTimeline = v => Number.isInteger(v) && v >= 0 && Number.isInteger(decoded) && v < decoded;
+                        const outliers = subject.pose_outlier_frame_indices;
+                        const outlierCount = Array.isArray(outliers) && outliers.every(inTimeline) && new Set(outliers).size === outliers.length ? outliers.length : '未知';
+                        const masked = subject.measurement_masked_frames;
+                        const maskedCount = Number.isInteger(masked) && masked >= 0 && Number.isInteger(decoded) && masked <= decoded ? masked : '未知';
+                        subjectText += '<p class="mb-2">短暂检测异常保留未知：' + outlierCount + ' 帧；存在被屏蔽关节的帧：' + maskedCount + ' 帧。未知帧和歧义关节未补算，这些计数不代表测量准确率。</p>';
+                    }
+                }
+                notice.innerHTML = '<strong>未评分：证据不足，暂不提供技术诊断或训练计划。</strong>' + subjectText + stopText +
+                    (reasons.length ? '<details class="measurement-details mt-2"><summary>查看测量边界与限制（' + reasons.length + ' 项）</summary><ul class="mb-0 mt-2"><li>' + reasons.map(escapeHtml).join('</li><li>') + '</li></ul></details>' :
+                        '<div>缺少可验证的评分证据；有限二维角度也不代表技术诊断已验证。</div>');
+            }
+            const coverage = document.getElementById('measurementCoverage');
+            coverage.innerHTML = '';
+            const entries = Object.entries(data.measurement_coverage || {});
+            coverage.style.display = entries.length ? 'block' : 'none';
+            if (!entries.length) return;
+            coverage.innerHTML = '<strong>测量覆盖率（不是准确率）</strong><div>分子为该指标有效帧数，分母为完整待分析时间线的预期帧数（包括检测失败帧）；分母未知时不计算比例。</div>';
+            const labels = {knee_flexion: '膝盖弯曲角度', shin_angle: '小腿角度', body_lean: '身体前倾角度', body_leang: '躯干倾角（二维投影）'};
+            entries.forEach(([key, entry]) => {
+                const e = entry || {};
+                const valid = Number.isInteger(e.valid_frames) && e.valid_frames >= 0;
+                const denominator = Number.isInteger(e.expected_frames) && e.expected_frames > 0;
+                const ratio = denominator && valid && e.valid_frames <= e.expected_frames && Number.isFinite(e.coverage) && e.coverage >= 0 && e.coverage <= 1;
+                const line = document.createElement('div');
+                line.textContent = (labels[key] || key) + '：有效帧 ' + (valid ? e.valid_frames : '未知') +
+                    ' / 预期帧（分母）' + (denominator ? e.expected_frames : '未知或为0') + '；覆盖率 ' +
+                    (ratio ? formatMetric(e.coverage, 1, '%', 100) : '未知');
+                coverage.appendChild(line);
+            });
+        }
+
+        function renderTrainingPlan(plan) {
+            const card = document.getElementById('trainingPlanCard');
+            const body = document.getElementById('trainingPlanBody');
+            body.innerHTML = '';
+            if (!plan || (!plan.focus_areas || !plan.focus_areas.length)) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+            let html = '';
+
+            // 重点改进方向
+            html += '<h6 class="text-muted" style="margin-bottom:8px;">重点改进方向</h6>';
+            (plan.focus_areas || []).forEach(function (area) {
+                html += '<div class="metric-item"><span class="metric-value" style="float:none;display:block;">' + escapeHtml(area) + '</span></div>';
+            });
+            html += '<hr style="margin:12px 0;">';
+
+            // 技术练习
+            if (plan.drills && plan.drills.length) {
+                html += '<h6 class="text-muted" style="margin-bottom:8px;">技术练习（Drills）</h6>';
+                plan.drills.forEach(function (d) {
+                    html += '<div class="metric-item"><span class="metric-label">' + escapeHtml(d[0]) + ':</span>' +
+                            '<span class="metric-value" style="float:none;display:block;font-weight:400;">' + escapeHtml(d[1]) + '（' + escapeHtml(d[2]) + '）</span></div>';
+                });
+                html += '<hr style="margin:12px 0;">';
+            }
+
+            // 周计划
+            html += '<h6 class="text-muted" style="margin-bottom:8px;">每周训练安排</h6>';
+            html += '<table class="table table-sm" style="font-size:0.85rem;">';
+            html += '<thead><tr><th>日</th><th>内容</th><th>目的</th></tr></thead><tbody>';
+            (plan.weekly_plan || []).forEach(function (row) {
+                html += '<tr><td style="white-space:nowrap;font-weight:600;">' + escapeHtml(row[0]) + '</td>' +
+                        '<td>' + escapeHtml(row[1]) + '</td>' +
+                        '<td style="white-space:nowrap;">' + escapeHtml(row[2]) + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            html += '<hr style="margin:12px 0;">';
+
+            // 力量训练
+            if (plan.strength && plan.strength.length) {
+                html += '<h6 class="text-muted" style="margin-bottom:8px;">力量训练（每周 2 次）</h6>';
+                plan.strength.forEach(function (s) {
+                    html += '<div class="metric-item"><span class="metric-value" style="float:none;display:block;">' + escapeHtml(s) + '</span></div>';
+                });
+                html += '<hr style="margin:12px 0;">';
+            }
+
+            // 注意事项
+            if (plan.notes && plan.notes.length) {
+                html += '<h6 class="text-muted" style="margin-bottom:8px;">注意事项</h6>';
+                plan.notes.forEach(function (n) {
+                    html += '<div class="metric-item"><span class="metric-value" style="float:none;display:block;">' + escapeHtml(n) + '</span></div>';
+                });
+            }
+
+            body.innerHTML = html;
+        }
+
+        function renderGait(gait) {
+            const grid = document.getElementById('gaitGrid');
+            grid.innerHTML = '';
+            if (!gait) return;
+            const items = [
+                ['步频', formatMetric(gait.cadence, 1, ' 步/分')],
+                ['步频水平', gait.cadence_level || '-'],
+                ['垂直振荡', formatMetric(gait.vertical_oscillation, 1, '%（腿长）', 100)],
+                ['平均步幅', formatMetric(gait.stride_length_m, 2, ' m')],
+                ['着地时间', formatMetric(gait.ground_contact_time_ms, 0, ' ms')],
+                ['支撑比例', formatMetric(gait.stance_ratio, 0, '%', 100)],
+                ['左右步频对称', formatMetric(gait.step_symmetry, 0, '%', 100)],
+                ['有效帧比例（非准确率）', formatMetric(gait.valid_frame_ratio, 0, '%', 100)],
+            ];
+            const sp = gait.strike_posture || null;
+            if (sp) {
+                items.push(['落地小腿前倾', formatMetric(sp.left_forward_deg, 1, '°') + ' / ' + formatMetric(sp.right_forward_deg, 1, '°') + '（左/右）']);
+                items.push(['跨步风险', formatMetric(sp.over_stride_ratio, 0, '%', 100) + ' · ' + (sp.over_stride_level || '-')]);
+            }
+            items.forEach(function (it) {
+                const col = document.createElement('div');
+                col.className = 'col-6 col-md-4 col-xl-3';
+                col.innerHTML = '<div class="metric-item"><span class="metric-label">' + it[0] + ':</span>' +
+                    '<span class="metric-value">' + escapeHtml(String(it[1])) + '</span></div>';
+                grid.appendChild(col);
+            });
+        }
+
+        function renderQuality(q) {
+            const wrap = document.getElementById('qualityWrap');
+            const body = document.getElementById('qualityBody');
+            body.innerHTML = '';
+            if (!q || !Object.keys(q).length) { wrap.style.display = 'none'; return; }
+            let html = '';
+            html += '<div class="row" style="font-size:0.85rem;">';
+            html += '<div class="col-auto">时长: ' + formatMetric(q.duration, 1, 's') + '</div>';
+            html += '<div class="col-auto">帧率: ' + formatMetric(q.fps, 1, 'fps') + '</div>';
+            html += '<div class="col-auto">有效帧（非准确率）: ' + formatMetric(q.valid_frame_ratio, 0, '%', 100) + '</div>';
+            html += '</div>';
+            (q.warnings || []).forEach(function (w) {
+                html += '<div class="text-warning small">⚠ ' + escapeHtml(w) + '</div>';
+            });
+            (q.reasons || []).forEach(function (r) {
+                html += '<div class="text-danger small">✕ ' + escapeHtml(r) + '</div>';
+            });
+            (q.retake_tips || []).forEach(function (t) {
+                html += '<div class="text-info small">💡 ' + escapeHtml(t) + '</div>';
+            });
+            if (!q.warnings || !q.warnings.length) {
+                if (!q.reasons || !q.reasons.length) {
+                    html += '<div class="text-muted small">未提供质量警告；这不代表质量已验证良好。</div>';
+                }
+            }
+            body.innerHTML = html;
+            wrap.style.display = 'block';
+        }
+
+        function renderKeyframes(data) {
+            const gallery = document.getElementById('keyframesGallery');
+            const wrap = document.getElementById('keyframesWrap');
+            gallery.innerHTML = '';
+
+            if (!data.keyframes_dir) {
+                wrap.style.display = 'none';
+                return;
+            }
+            // 立即显示区块，避免图片加载完成后才出现导致页面跳动
+            wrap.style.display = 'block';
+
+            const count = data.keyframes_extracted || 5;
+            let done = 0, shown = 0;
+            const settle = function () {
+                done++;
+                if (done === count && shown === 0) {
+                    gallery.innerHTML = '<div class="col-12 text-muted small">' +
+                        '<i class="fas fa-exclamation-triangle me-1"></i>关键帧截图不存在或已丢失' +
+                        '（早期版本的关键帧未持久化，重新分析一次即可恢复）</div>';
+                }
+            };
+            for (let i = 1; i <= count; i++) {
+                const fname = 'keyframe_' + String(i).padStart(2, '0') + '.jpg';
+                const url = '/api/keyframes/' + data.keyframes_dir + '/' + fname;
+                const col = document.createElement('div');
+                col.className = 'col-6 col-md-4';
+                const img = document.createElement('img');
+                img.className = 'kf-img';
+                img.alt = fname;
+                img.loading = 'lazy';
+                // 带鉴权拉取图片（blob），避免 <img> 直连丢失 Authorization 头
+                apiFetch(url).then(async resp => {
+                    if (!resp.ok) throw new Error('http ' + resp.status);
+                    const blob = await resp.blob();
+                    img.src = URL.createObjectURL(blob);
+                }).catch(settle);
+                img.onerror = settle;
+                img.onload = function () { shown++; };
+                const cap = document.createElement('div');
+                cap.className = 'kf-cap';
+                cap.textContent = '关键帧 ' + i;
+                col.appendChild(img);
+                col.appendChild(cap);
+                gallery.appendChild(col);
+            }
+        }
+
+        function displayResults(data) {
+            const unscored = !Number.isFinite(data.score) ||
+                (typeof data.measurement_status === 'string' && (data.measurement_status.startsWith('unscored') || data.measurement_status === 'insufficient_evidence'));
+            document.getElementById('emptyCard').style.display = 'none';
+            document.getElementById('resultsCard').style.display = 'block';
+            document.getElementById('metricsCard').style.display = 'block';
+            document.getElementById('adviceCard').style.display = unscored ? 'none' : 'block';
+
+            document.getElementById('resultMeta').textContent =
+                '学员: ' + (data.user_name || '-') +
+                (data.coach_name ? ' | 评估: ' + data.coach_name : '');
+
+            document.getElementById('scoreNum').textContent = unscored ? '未评分' : data.score;
+            document.getElementById('scoreGrade').textContent = unscored ? '' : (data.grade || '');
+            document.getElementById('scoreUnit').style.display = unscored ? 'none' : '';
+            document.getElementById('scoreBanner').style.background = unscored ? '#6c757d' : '';
+            document.getElementById('scoreBanner').style.boxShadow = unscored ? 'none' : '';
+            renderMeasurementEvidence(data, unscored);
+
+            const breakdownBody = document.getElementById('breakdownBody');
+            breakdownBody.innerHTML = '';
+            document.getElementById('breakdownWrap').style.display = 'none';
+            if (data.score_breakdown && data.score_breakdown.length) {
+                document.getElementById('breakdownWrap').style.display = 'block';
+                data.score_breakdown.forEach(function (b) {
+                    const tr = document.createElement('tr');
+                    const scored = !unscored && Number.isFinite(b.score);
+                    const color = !scored ? '#6c757d' : (b.score < 60 ? '#c00' : (b.score < 80 ? '#c80' : '#080'));
+                    tr.innerHTML =
+                        '<td>' + escapeHtml(b.category) + '</td>' +
+                        '<td>' + escapeHtml(b.item) + '</td>' +
+                        '<td>' + escapeHtml(b.result) + '</td>' +
+                        '<td style="color:' + color + ';font-weight:600;">' + (scored ? b.score : '未评分') + '</td>';
+                    breakdownBody.appendChild(tr);
+                });
+            }
+
+            const m = data.metrics || {};
+            document.getElementById('kneeAngle').textContent = formatMetric(m.avg_knee_flexion, 1, '°');
+            document.getElementById('shinAngle').textContent = formatMetric(m.avg_shin_angle, 1, '°');
+            document.getElementById('strideLevel').textContent = unscored ? '-' : (m.stride_level || '-');
+            document.getElementById('symmetryLevel').textContent = unscored ? '-' : (m.symmetry_level || '-');
+            document.getElementById('bodyLeang').textContent = formatMetric(m.body_leang, 1, '°');
+
+            renderGait(unscored ? null : (data.gait || null));
+            renderTrainingPlan(unscored ? null : (data.training_plan || null));
+            renderQuality(data.video_quality || null);
+
+            const problemsList = document.getElementById('problemsList');
+            problemsList.innerHTML = '';
+            (unscored ? [] : (data.problems || [])).forEach(function (problem) {
+                const el = document.createElement('div');
+                el.className = 'problem-item';
+                el.textContent = '• ' + problem;
+                problemsList.appendChild(el);
+            });
+
+            const suggestionsList = document.getElementById('suggestionsList');
+            suggestionsList.innerHTML = '';
+            (unscored ? [] : (data.suggestions || [])).forEach(function (suggestion) {
+                const el = document.createElement('div');
+                el.className = 'suggestion-item';
+                el.textContent = '✓ ' + suggestion;
+                suggestionsList.appendChild(el);
+            });
+
+            if (unscored) {
+                document.getElementById('keyframesGallery').innerHTML = '';
+                document.getElementById('keyframesWrap').style.display = 'none';
+            } else {
+                renderKeyframes(data);
+            }
+
+            const downloadReportBtn = document.getElementById('downloadReportBtn');
+            document.getElementById('downloadRow').style.display = 'none';
+            downloadReportBtn.onclick = null;
+            if (data.report_file) {
+                document.getElementById('downloadRow').style.display = 'block';
+                downloadReportBtn.onclick = async function () {
+                    try {
+                        const resp = await apiFetch('/api/report/' + data.report_file);
+                        if (!resp.ok) { alert('下载失败'); return; }
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        window.open(url, '_blank');
+                        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+                    } catch (err) {
+                        if (err.message !== 'unauthorized') alert('下载失败，请检查网络连接.');
+                    }
+                };
+            }
+        }
+
+        // 有缓存结果则直接展示
+        if (lastResult && lastResult.status === 'success') {
+            displayResults(lastResult);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# PoseRun v2.8.0 运行时依赖
+# 推荐 Python 3.10–3.12（生产容器为 3.12）
+
+flask>=3.0,<4
+flask-cors>=4.0,<7
+flask-limiter>=3.5,<4
+numpy>=1.26,<3
+opencv-python-headless>=4.9
+Pillow>=10.0
+reportlab>=4.0
+python-docx>=1.1
+PyMuPDF>=1.24
+
+# YOLO11n-Pose 关键点检测（AGPL-3.0，许可证影响见 README「许可证」一节）
+# torch / torchvision 会作为 ultralytics 的依赖自动安装。
+# 纯 CPU 环境可先装 CPU 版 torch 以减小体积：
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+ultralytics>=8.3,<9

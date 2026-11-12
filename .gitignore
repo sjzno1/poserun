@@ -1,0 +1,50 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---- 运行时数据（绝不入库：用户视频/报告/账号库/备份）----
+data/
+uploads/
+reports/
+keyframes/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+.auth_secret
+.backups/
+
+# ---- 密钥与配置 ----
+.env
+.env.*
+!.env.example
+certs/
+*.pem
+*.key
+*.crt
+*.p12
+
+# ---- 模型权重（体积大，按 README 下载）----
+*.pt
+*.onnx
+*.engine
+
+# ---- 测试/验收产物 ----
+calibration/results*/
+sample_frames/
+sample_template_report.pdf
+*.log
+
+# ---- 清理工作记录（内部文档，发布前不入库）----
+SANITIZE-PROGRESS.md
+
+# ---- 系统/编辑器 ----
+.DS_Store
+.idea/
+.vscode/
