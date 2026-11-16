@@ -97,7 +97,7 @@ class GarminClient:
                 else: raise
         try:
             rows=json.loads(body)
-            if not isinstance(rows,list) or not all(isinstance(r,dict) for r in rows):
+            if not isinstance(rows,list) or len(rows)>100 or not all(isinstance(r,dict) for r in rows):
                 raise ValueError()
             return rows
         except Exception:

@@ -40,6 +40,29 @@ def test_encrypted_fallback_reopens_and_permissions(tmp_path):
     assert os.stat(tmp_path/'garmin-vault.key').st_mode & 0o777 == 0o600
 
 
+def test_secure_keyring_master_is_reused_without_file(tmp_path,monkeypatch):
+    import keyring
+    saved={}
+    class SecureBackend:
+        __module__='keyring.backends.macOS'
+        def get_password(self,service,name): return saved.get((service,name))
+        def set_password(self,service,name,value): saved[(service,name)]=value
+    monkeypatch.setattr(keyring,'get_keyring',lambda:SecureBackend())
+    vault=KeyVault(tmp_path)
+    encrypted=vault.encrypt('SYNTHETIC-ONLY')
+    assert vault.backend=='os-keyring'
+    assert KeyVault(tmp_path).decrypt(encrypted)=='SYNTHETIC-ONLY'
+    assert not (tmp_path/'garmin-vault.key').exists()
+    assert len(saved)==1
+
+
+def test_fallback_rejects_publicly_readable_master(tmp_path):
+    path=tmp_path/'garmin-vault.key'
+    path.write_bytes(b'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
+    path.chmod(0o644)
+    with pytest.raises(ValueError):KeyVault(tmp_path,use_keyring=False).encrypt('SYNTHETIC-ONLY')
+
+
 def test_client_token_exchange_retry_and_secret_safe_errors():
     calls=[]
     answers=[(200,b'{"access_token":"MOCK-TOKEN","expires_in":3600}'),(429,b'error'),(200,b'[]')]

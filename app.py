@@ -107,7 +107,7 @@ profile_store = ProfileStore(os.path.join('data', 'profiles.db'))
 profile_engine = PersonalizedEngine(profile_store)
 
 from running.themes import register_themes
-register_themes(app, profile_store.db_path)
+register_themes(app, profile_store.db_path, limiter=limiter)
 app.config['GARMIN_LIVE_ENABLED'] = os.environ.get('GARMIN_LIVE_ENABLED') == '1'
 from running import register_running
 running_store = register_running(app, data_dir=os.environ.get('POSERUN_DATA_DIR', 'data'), limiter=limiter)

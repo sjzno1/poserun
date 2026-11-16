@@ -18,7 +18,7 @@ def create_app(data_dir=None):
     auth=AuthManager(str(data/'auth.db'))
     auth.attach(app)
     limiter=Limiter(key_func=lambda: str(g.current_user['id']) if getattr(g,'current_user',None) else get_remote_address(),app=app,storage_uri='memory://')
-    register_themes(app,str(data/'profiles.db'))
+    register_themes(app,str(data/'profiles.db'),limiter=limiter)
     register_running(app,data,limiter)
 
     @app.get('/')

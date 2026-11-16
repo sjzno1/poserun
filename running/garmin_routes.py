@@ -109,8 +109,10 @@ def make_garmin_blueprint(app, store, data_dir):
                     source='demo' if row['mode']=='demo' else 'api',garmin_activity_id=str(aid)))
             for activity in normalized:
                 _,created=store.add(uid,activity);added+=int(created)
-        except (GarminError,ValueError,KeyError,TypeError,AttributeError):
+        except (GarminError,ValueError,KeyError,TypeError,AttributeError) as exc:
             with store.conn() as conn:
+                if isinstance(exc,GarminError) and exc.status in (401,403):
+                    conn.execute("UPDATE garmin_connection SET status='invalid' WHERE user_id=?",(uid,))
                 conn.execute('INSERT OR REPLACE INTO sync_state VALUES (?,?,?,?)',(uid,datetime.now(timezone.utc).isoformat(),'error','同步失败；上游结构或连接待核验，未输出敏感错误'))
             return jsonify(error='同步失败；上游结构或连接待核验，未输出敏感错误'),502
         with store.conn() as conn:
