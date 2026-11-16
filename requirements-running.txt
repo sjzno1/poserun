@@ -1,0 +1,7 @@
+# Lightweight running management; no inference dependencies.
+flask>=3.1,<4
+flask-limiter>=3.11,<4
+fitparse==1.2.0
+keyring>=25,<26
+cryptography>=44
+pytest>=8,<9
