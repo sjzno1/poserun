@@ -68,6 +68,13 @@ def run_backup():
                 roots = {'data': DATA_DIR, 'uploads': UPLOADS_DIR, 'reports': REPORTS_DIR}
                 for label, root in roots.items():
                     base = Path(root)
+                    # A source absent for now (fresh install / non-core volume not
+                    # mounted) contributes nothing; skip it instead of failing the
+                    # whole backup. A source that EXISTS but is a symlink or not a
+                    # directory is still rejected. DATA_DIR existence remains hard-
+                    # required above.
+                    if not base.exists():
+                        continue
                     if not base.is_dir() or base.is_symlink():
                         raise ValueError(f'备份源不存在或不是实际目录: {label}')
                     for directory, dirs, files in os.walk(base, followlinks=False):

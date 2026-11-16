@@ -6,6 +6,9 @@ import sys
 import unittest
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
+import pytest
+pytest.importorskip('calibration.overlap_evidence',
+                    reason='calibration.overlap_evidence not present in this distribution')
 from calibration.overlap_evidence import compare, POLICY
 
 

@@ -54,7 +54,10 @@ class TestHealth(unittest.TestCase):
         c = make_client()
         r = c.get('/')
         self.assertEqual(r.status_code, 200)
-        self.assertIn(b'PoseRun', r.data)
+        # P1's approved three-theme redesign replaced the legacy PoseRun landing page
+        # with the 跑步管理系统 dashboard; assert the dashboard entry is served (the
+        # literal "PoseRun" branding was intentionally moved off the home page).
+        self.assertIn(b'RUNNING MANAGEMENT', r.data)
 
 
 class TestAuth(unittest.TestCase):

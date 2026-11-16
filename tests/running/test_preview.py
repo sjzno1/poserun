@@ -1,5 +1,9 @@
+import subprocess
 import sys
+from pathlib import Path
 from running.preview import create_app
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_real_auth_static_and_blueprint_integration_without_models(tmp_path):
@@ -19,4 +23,17 @@ def test_real_auth_static_and_blueprint_integration_without_models(tmp_path):
     assert c.get('/api/profile/theme',headers=headers).json['theme']=='fieldnote'
     assert auth.delete_user(user['id']) is None
     assert c.get('/api/running/activities',headers=headers).status_code == 401
-    assert not any(name in sys.modules for name in ['torch','mediapipe','pose_analyzer'])
+    # Verify inference-import isolation in a clean subprocess: under joint pytest
+    # collection other suites import torch/pose_analyzer into sys.modules, which
+    # would make an in-process check false-positive or false-negative.
+    check = (
+        "import sys;"
+        "from running.preview import create_app;"
+        "create_app();"
+        "leaked=[m for m in ('torch','mediapipe','pose_analyzer') if m in sys.modules];"
+        "sys.stderr.write(str(leaked));"
+        "sys.exit(1 if leaked else 0)"
+    )
+    r = subprocess.run([sys.executable, '-c', check], cwd=str(ROOT),
+                       capture_output=True, text=True)
+    assert r.returncode == 0, f"preview leaked inference imports: {r.stderr}"

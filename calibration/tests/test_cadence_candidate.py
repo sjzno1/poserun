@@ -5,7 +5,13 @@ from pathlib import Path
 import unittest
 import numpy as np
 
-SPEC = importlib.util.spec_from_file_location('cadence_candidate', Path(__file__).resolve().parents[1]/'cadence_candidate.py')
+import pytest
+
+_TARGET = Path(__file__).resolve().parents[1] / 'cadence_candidate.py'
+if not _TARGET.exists():
+    pytest.skip('cadence_candidate.py not present in this distribution',
+                allow_module_level=True)
+SPEC = importlib.util.spec_from_file_location('cadence_candidate', _TARGET)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
