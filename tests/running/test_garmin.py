@@ -3,7 +3,7 @@ import os
 import pytest
 from test_activities import web
 from running.key_vault import KeyVault
-from running.garmin_client import GarminClient, GarminError, validate_key
+from running.garmin_client import GarminClient, GarminError, validate_key, BASE
 
 
 def test_demo_connect_sync_disconnect_never_masquerades_as_real(web):
@@ -73,7 +73,8 @@ def test_client_token_exchange_retry_and_secret_safe_errors():
     assert calls[0][0]=='POST'
     assert calls[0][2]['Authorization']=='ApiKey SYNTHETIC-KEY'
     assert calls[1][2]['Authorization']=='Bearer MOCK-TOKEN'
-    assert calls[0][1].startswith('https://personal.connectapi.garmin.com/')
+    assert calls[0][1].startswith(BASE+'/')
+    assert calls[0][1] == BASE+'/personalapitoken-service/personal-api/personal-api-key/token'
     def failing(*args): raise RuntimeError('SYNTHETIC-KEY MOCK-TOKEN')
     client=GarminClient('SYNTHETIC-KEY',transport=failing,sleep=lambda _:None)
     with pytest.raises(GarminError) as exc: client.test_key()

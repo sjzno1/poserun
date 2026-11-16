@@ -3,12 +3,15 @@ Reference: indaco/garmin-personal-mcp src/api-client.ts, src/tools.ts.
 Never follows redirects, sends key only to the fixed Garmin token endpoint.
 """
 import json
+import os
 import re
 import time
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError
 
-BASE = 'https://personal.connectapi.garmin.com'
+# China-region Personal API by default; override with GARMIN_API_BASE_URL
+# (global host: https://personal.connectapi.garmin.com)
+BASE = os.environ.get('GARMIN_API_BASE_URL', 'https://personal.connectapi.garmin.cn').rstrip('/')
 TOKEN_PATH = '/personalapitoken-service/personal-api/personal-api-key/token'
 ACTIVITIES_PATH = '/activitylist-service/activities/search/activities'
 
