@@ -39,4 +39,9 @@ def make_blueprint(store):
         row, created = store.add(g.current_user['id'], activity)
         return jsonify(activity=row, duplicate=not created), 201 if created else 200
 
+    @bp.get('/dashboard')
+    def overview():
+        from .running_analysis import dashboard
+        return jsonify(dashboard(store, g.current_user['id']))
+
     return bp

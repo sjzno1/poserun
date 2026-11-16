@@ -26,6 +26,14 @@ async function rmDetail(){
   }
   document.getElementById('activityDetail').hidden=false;
 }
+async function rmDashboard(){
+  const d=await rmAPI('/dashboard');
+  rmText('weeklyKm',d.weekly_km==null?'未知':d.weekly_km+' km');
+  rmText('weeklyEvidence',`周起点 ${d.weekly_start} / UTC · 来源活动 #${d.weekly_evidence.join(', #')||'无'} · 未核验${d.weekly_missing_distance?'；存在缺失距离':''}`);
+  rmActivityList('recentActivities',d.recent_activities);rmText('dashboardNotice',d.notice);
+  const chart=document.getElementById('loadTrend');chart.replaceChildren();
+  d.load_trend.values.forEach((v,i)=>{const bar=document.createElement('div');bar.className='rm-bar';bar.style.height=(v*3)+'px';bar.textContent=`演示 ${i+1}：${v}`;chart.append(bar);});
+}
 let rmOffset=0;
 async function rmLoadActivities(){const d=await rmAPI('/activities?limit=50&offset='+rmOffset);rmActivityList('activitiesList',d.activities);document.getElementById('moreActivities').disabled=d.activities.length<50;}
 async function rmReady(){
