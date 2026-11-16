@@ -2,8 +2,10 @@
 // 页面在引入本脚本前设置 window.PAGE = 'home' | 'upload' | 'results' | 'history' | 'camera' | 'users'
 // 本脚本负责：登录/注册遮罩、导航栏、页脚注入，令牌校验，退出登录
 window.PAGE = window.PAGE || 'home';
-const themeCSS = document.createElement('link'); themeCSS.rel = 'stylesheet'; themeCSS.href = '/themes/theme-system.css'; document.head.append(themeCSS);
-const themeJS = document.createElement('script'); themeJS.src = '/themes/theme-system.js'; themeJS.async = false; document.head.append(themeJS);
+if (document.head && document.createElement) {
+    const themeCSS = document.createElement('link'); themeCSS.rel = 'stylesheet'; themeCSS.href = '/themes/theme-system.css'; document.head.append(themeCSS);
+    const themeJS = document.createElement('script'); themeJS.src = '/themes/theme-system.js'; themeJS.async = false; document.head.append(themeJS);
+}
 
 let authToken = localStorage.getItem('poserun_token') || null;
 let authUser = null;
@@ -42,7 +44,10 @@ function escapeHtml(s) {
 // ===== 页面骨架注入：登录遮罩 + 侧边栏 + 顶栏 + 页脚（Portainer 风格） =====
 function buildShell() {
     const pageTitles = {
-        home: '概览',
+        home: '总览',
+        activities: '活动档案',
+        garmin: '佳明连接',
+        settings: '外观设置',
         upload: '自动主体分析',
         results: '分析结果',
         history: '历史记录',
@@ -84,7 +89,7 @@ function buildShell() {
         return '<div class="sidebar-section">' + s[0] + '</div><ul class="sidebar-nav">' + s[1] + '</ul>';
     }).join('');
 
-    const title = pageTitles[window.PAGE] || 'PoseRun';
+    const title = pageTitles[window.PAGE] || '跑步管理系统';
 
     document.body.insertAdjacentHTML('afterbegin',
         '<div id="authOverlay" class="auth-overlay" style="display: none;">' +

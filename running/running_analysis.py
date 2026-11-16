@@ -11,7 +11,7 @@ def dashboard(store, uid, now=None):
     end = start+timedelta(days=7)
     # Query without pagination to avoid undercounting busy weeks.
     with store.conn() as conn:
-        rows = [dict(r) for r in conn.execute("SELECT id,distance_m FROM activities WHERE user_id=? AND sport='running' AND start_time>=? AND start_time<?",(uid,start.isoformat(),end.isoformat()))]
+        rows = [dict(r) for r in conn.execute("SELECT id,distance_m FROM activities WHERE user_id=? AND sport='running' AND source!='demo' AND start_time>=? AND start_time<?",(uid,start.isoformat(),end.isoformat()))]
     missing = sum(r['distance_m'] is None for r in rows)
     total = None if missing else rounded(sum(r['distance_m'] for r in rows)/1000,2)
     return dict(weekly_km=total, weekly_start=start.isoformat(), week_timezone='UTC',

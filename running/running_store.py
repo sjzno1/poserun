@@ -54,8 +54,8 @@ class RunningStore:
             duplicate = conn.execute("""SELECT * FROM activities WHERE user_id=? AND (
                 (file_sha256 IS NOT NULL AND file_sha256=?) OR
                 (garmin_activity_id IS NOT NULL AND garmin_activity_id=?) OR
-                (start_time=? AND sport=? AND abs(distance_m-?)<=1 AND abs(duration_s-?)<=1))""",
-                (uid,activity.get('file_sha256'),activity.get('garmin_activity_id'),activity['start_time'],activity['sport'],activity['distance_m'],activity['duration_s'])).fetchone()
+                (start_time=? AND sport=? AND (source='demo')=(?='demo') AND abs(distance_m-?)<=1 AND abs(duration_s-?)<=1))""",
+                (uid,activity.get('file_sha256'),activity.get('garmin_activity_id'),activity['start_time'],activity['sport'],activity['source'],activity['distance_m'],activity['duration_s'])).fetchone()
             if duplicate:
                 return dict(duplicate), False
             columns = ('start_time','sport','distance_m','duration_s','avg_hr','source','file_sha256','garmin_activity_id')

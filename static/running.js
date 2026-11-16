@@ -36,6 +36,27 @@ async function rmDashboard(){
 }
 let rmOffset=0;
 async function rmLoadActivities(){const d=await rmAPI('/activities?limit=50&offset='+rmOffset);rmActivityList('activitiesList',d.activities);document.getElementById('moreActivities').disabled=d.activities.length<50;}
+async function rmGarmin(){
+  const key=document.getElementById('garminKey'),mode=document.getElementById('garminMode');
+  const expiry=document.getElementById('garminExpiry');
+  if(!expiry.value){const d=new Date();d.setDate(d.getDate()+30);expiry.value=d.toISOString().slice(0,10);}
+  async function status(){
+    const s=await rmAPI('/garmin');
+    rmText('garminState',`${s.status} · ${s.mode||'无连接'} · 有效期 ${s.expiry||'未知'}（用户声明）${s.renewal_due?' · 请续期':''}`);
+    rmText('garminSyncState',s.sync ? `最近同步 ${s.sync.last_run_at} / ${s.sync.status} ${s.sync.error||''}` : '尚无同步记录');
+    document.getElementById('garminSync').disabled=['disconnected','expired'].includes(s.status);
+  }
+  mode.onchange=()=>{key.value='';key.disabled=mode.value==='demo';};
+  document.getElementById('garminForm').onsubmit=async e=>{
+    e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;
+    const payload={mode:mode.value,expiry:expiry.value};if(mode.value==='live')payload.key=key.value;
+    try{const r=await rmAPI('/garmin/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});rmText('runningStatus','已连接 · '+r.mode+' · '+r.notice);await status();}
+    catch(e){rmText('runningStatus',e.message);}finally{key.value='';delete payload.key;button.disabled=false;}
+  };
+  document.getElementById('garminSync').onclick=async e=>{e.target.disabled=true;try{const r=await rmAPI('/garmin/sync',{method:'POST'});rmText('runningStatus',`本次新增 ${r.added} 条。${r.notice}`);}catch(e){rmText('runningStatus',e.message);}finally{await status();}};
+  document.getElementById('garminDisconnect').onclick=async()=>{try{await rmAPI('/garmin',{method:'DELETE'});rmText('runningStatus','已断开，活动保留。');await status();}catch(e){rmText('runningStatus',e.message);}};
+  await status();
+}
 async function rmReady(){
   try {
     if(window.PAGE==='activities'){
@@ -52,4 +73,4 @@ async function rmReady(){
   } catch(e){rmText('runningStatus',e.message);}
 }
 function onAuthReady(user){if(user)rmReady();}
-if(typeof authUser!=='undefined' && authUser)rmReady();
+// Data loads only after common.js has verified the current session.
