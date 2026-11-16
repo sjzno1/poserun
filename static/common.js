@@ -2,6 +2,8 @@
 // 页面在引入本脚本前设置 window.PAGE = 'home' | 'upload' | 'results' | 'history' | 'camera' | 'users'
 // 本脚本负责：登录/注册遮罩、导航栏、页脚注入，令牌校验，退出登录
 window.PAGE = window.PAGE || 'home';
+const themeCSS = document.createElement('link'); themeCSS.rel = 'stylesheet'; themeCSS.href = '/themes/theme-system.css'; document.head.append(themeCSS);
+const themeJS = document.createElement('script'); themeJS.src = '/themes/theme-system.js'; themeJS.async = false; document.head.append(themeJS);
 
 let authToken = localStorage.getItem('poserun_token') || null;
 let authUser = null;
@@ -52,8 +54,11 @@ function buildShell() {
         trend: '趋势追踪',
     };
     const navItems = [
-        ['home', '/', '首页', 'fa-running', '分析'],
-        ['upload', '/upload.html', '上传分析', 'fa-upload', '分析'],
+        ['home', '/', '总览', 'fa-running', '跑步管理'],
+        ['activities', '/activities.html', '活动', 'fa-history', '跑步管理'],
+        ['garmin', '/garmin.html', '佳明连接', 'fa-link', '跑步管理'],
+        ['settings', '/settings.html', '外观设置', 'fa-user-edit', '系统'],
+        ['upload', '/upload.html', '跑姿分析', 'fa-upload', '分析'],
         ['results', '/results.html', '分析结果', 'fa-chart-line', '分析'],
         ['camera', '/camera.html', '摄像头预览', 'fa-video', '分析'],
         ['history', '/history.html', '历史记录', 'fa-history', '数据'],
@@ -86,7 +91,7 @@ function buildShell() {
         '  <div class="auth-card">' +
         '    <div class="auth-header">' +
         '      <div class="auth-logo"><i class="fas fa-running"></i></div>' +
-        '      <h4>PoseRun 跑姿分析系统</h4>' +
+        '      <h4>跑步管理系统</h4>' +
         '      <p>登录后开始跑姿分析</p>' +
         '    </div>' +
         '    <div class="auth-body">' +
@@ -125,7 +130,7 @@ function buildShell() {
         '<aside class="sidebar" id="appSidebar">' +
         '  <a class="sidebar-brand" href="/">' +
         '    <i class="fas fa-running"></i>' +
-        '    <span>PoseRun<small>跑姿分析系统</small></span>' +
+        '    <span>跑步管理系统<small>poseRun · 跑姿与活动</small></span>' +
         '  </a>' +
         sectionHtml +
         '  <div class="sidebar-footer">v__POSERUN_VERSION__ · YOLO Pose</div>' +
@@ -243,7 +248,7 @@ function buildShell() {
         '</div>' +
         '<footer class="footer">' +
         '  <div class="container">' +
-        '    <p class="mb-1"><i class="fas fa-running me-1"></i>PoseRun 跑姿分析系统 v__POSERUN_VERSION__ | 基于 YOLO 的姿态识别技术</p>' +
+        '    <p class="mb-1"><i class="fas fa-running me-1"></i>跑步管理系统 v__POSERUN_VERSION__ | 基于 YOLO 的姿态识别技术</p>' +
         '    <p class="mb-0 small">使用问题请在项目仓库提交 Issue 反馈</p>' +
         '  </div>' +
         '</footer>');

@@ -106,6 +106,9 @@ audit_store = AuditStore(os.path.join('data', 'audit.db'))
 profile_store = ProfileStore(os.path.join('data', 'profiles.db'))
 profile_engine = PersonalizedEngine(profile_store)
 
+from running.themes import register_themes
+register_themes(app, profile_store.db_path)
+
 
 def _audit(action, target='', detail='', user=None):
     """写审计日志（自动带当前登录用户与 IP），失败不影响主流程"""
