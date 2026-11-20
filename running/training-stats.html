@@ -1,0 +1,16 @@
+<!-- AGPL-3.0 -->
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>训练统计仪表盘 · 澄明训练台</title><link rel="stylesheet" href="/vendor/bootstrap-5.3.0/bootstrap.min.css"><link rel="stylesheet" href="/common.css">
+<style>.stats-table{width:100%;border-collapse:collapse;font-size:15px}.stats-table th,.stats-table td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}.stats-table td.num,.stats-table th.num{text-align:right;font-variant-numeric:tabular-nums}.stats-table caption{caption-side:top;text-align:left;color:var(--muted);font-size:14px;padding-bottom:8px}.stats-scroll{overflow-x:auto}.stats-svg{width:100%;height:auto;color:var(--accent)}.pb-card .pb-value{font-size:30px;font-weight:600;margin:6px 0}</style>
+</head>
+<body><script>window.PAGE='training-stats';</script><main class="rm-main">
+<p>澄明训练台 ／ 训练档案</p><h1>训练统计仪表盘</h1>
+<p>仅统计本人导入的跑步摘要（北京时间），设备记录未核验。演示活动不计入；缺测不补零、不连线插值、不插算分段。</p>
+<label>统计年份 <select id="statsYear" aria-label="统计年份"></select></label>
+<p role="status" id="runningStatus"></p>
+<section class="rm-panel" aria-labelledby="pbTitle"><h2 id="pbTitle">个人最佳（已导入活动内最佳）</h2><div id="statsPb" class="rm-grid" aria-live="polite"></div></section>
+<section class="rm-panel" aria-labelledby="monthTitle"><h2 id="monthTitle">月度合计</h2><div id="statsMonths" aria-live="polite"></div></section>
+<section class="rm-panel" aria-labelledby="trendTitle"><h2 id="trendTitle">最近 12 周趋势</h2><div id="statsTrend" aria-live="polite"></div></section>
+<a href="/">返回总览</a> · <a href="/weekly-report">我的训练周报</a>
+</main><script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script><script src="/common.js"></script><script src="/icons.js"></script><script src="/running.js"></script></body></html>

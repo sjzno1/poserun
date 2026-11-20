@@ -1,11 +1,11 @@
 """
 PoseRun Analyzer - 姿态分析核心模块
-基于 YOLO11n-Pose 的关键点检测 + LSTM 时序平滑
+基于 YOLO11n-Pose 的关键点检测 + 确定性因果 EMA 时序平滑
 支持关键帧标注、历史对比等高级功能
 
 后端说明:
   - 关键点检测: YOLO11n-Pose (COCO 17 点)
-  - 时序平滑: LSTM 网络 (抑制逐帧抖动, 比 One Euro 滤波器更适应跑步周期性运动)
+  - 时序平滑: 确定性因果 EMA (类名 LSTMSmoother 保留以兼容 API; 仅在显式连续 frame_index/fps 下启用)
   - 指标计算: 保持原有几何算法 (膝盖角/小腿角/跨步/对称性)
 """
 
@@ -98,96 +98,68 @@ class Landmark:
 
 
 class LSTMSmoother:
-    """LSTM 时序平滑器 - 用于抑制关键点逐帧抖动
+    """确定性因果 EMA 平滑器（类名保留以兼容既有调用方 API）。
 
-    比 One Euro 滤波器更适应跑步的周期性运动模式。
-    使用轻量级 LSTM (hidden_size=32) 对关键点坐标序列进行平滑。
+    旧实现是随机初始化、无训练权重的 LSTM：恒定点会被随机权重拖动，
+    跨实例输出不可复现，不构成平滑器。现改为确定性因果指数滑动平均：
+      - float64 计算，x/y 独立，无随机数、无训练权重；
+      - 恒定输入 → 恒定输出（EMA 不动点，显式短路保证逐位相等）；
+      - 同输入同输出，跨实例一致；
+      - 时间平滑仅在显式且连续的 frame_index/fps 下启用：
+        缺口/重复/回退/fps 变化/缺少时间上下文 → 重置状态并直通原始点。
 
-    注意: 此实现使用纯 numpy 的简化 LSTM (避免 torch 依赖),
-    如果 torch 可用则使用 torch 实现以获得更好的平滑效果。
+    hidden_size/num_steps 为旧 LSTM 遗留参数，仅保持构造签名兼容，不再使用。
     """
+
+    ALPHA = 0.5  # 固定确定性权重（新观测占比），不依赖训练或随机初始化
 
     def __init__(self, hidden_size: int = 32, num_steps: int = 5):
         self.hidden_size = hidden_size
-        self.num_steps = num_steps  # 滑动窗口大小
-        self._buffer: List[np.ndarray] = []  # 坐标缓冲区 [x, y]
-        self._use_torch = False
-        self._torch_model = None
+        self.num_steps = num_steps
+        self._state: Optional[np.ndarray] = None
+        self._last_frame_index: Optional[int] = None
+        self._last_fps: Optional[float] = None
 
-        # 尝试使用 torch
-        try:
-            import torch
-            import torch.nn as nn
+    @staticmethod
+    def _valid_time(frame_index, fps) -> bool:
+        if frame_index is None or fps is None:
+            return False
+        if isinstance(frame_index, bool) or not isinstance(frame_index, (int, np.integer)):
+            return False
+        if isinstance(fps, bool) or not isinstance(fps, (int, float, np.number)):
+            return False
+        return frame_index >= 0 and math.isfinite(float(fps)) and fps > 0
 
-            class _LSTMSmootherModel(nn.Module):
-                def __init__(self, input_size=2, hidden_size=32):
-                    super().__init__()
-                    self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
-                    self.fc = nn.Linear(hidden_size, input_size)
-
-                def forward(self, x):
-                    # x: [batch, seq_len, input_size]
-                    lstm_out, _ = self.lstm(x)
-                    # 取最后时刻的输出
-                    last_out = lstm_out[:, -1, :]
-                    return self.fc(last_out)
-
-            self._torch_model = _LSTMSmootherModel(input_size=2, hidden_size=hidden_size)
-            # 初始化为接近恒等映射 (输入≈输出)
-            with torch.no_grad():
-                # FC 层初始化为小值 + 恒等偏置
-                self._torch_model.fc.weight.fill_(0.01)
-                self._torch_model.fc.bias.zero_()
-            self._use_torch = True
-        except ImportError:
-            self._use_torch = False
-
-    def add(self, point: np.ndarray) -> np.ndarray:
-        """添加一个新点, 返回平滑后的点
-
-        Args:
-            point: [x, y] 归一化坐标
-
-        Returns:
-            平滑后的 [x, y] 坐标
-        """
-        self._buffer.append(point.copy())
-
-        # 保持缓冲区大小
-        if len(self._buffer) > self.num_steps:
-            self._buffer.pop(0)
-
-        # 缓冲区不足时直接返回原始点
-        if len(self._buffer) < 3:
-            return point.copy()
-
-        # 构建输入序列
-        seq = np.array(self._buffer[-self.num_steps:], dtype=np.float32)
-
-        if self._use_torch:
-            return self._smooth_torch(seq)
+    def add(self, point: np.ndarray, frame_index=None, fps=None) -> np.ndarray:
+        """加入一个观测点。显式连续 frame_index/fps 时做因果 EMA，否则直通。"""
+        p = np.asarray(point, dtype=np.float64).reshape(2).copy()
+        valid_time = self._valid_time(frame_index, fps)
+        contiguous = (
+            valid_time
+            and self._state is not None
+            and self._last_fps == float(fps)
+            and frame_index == self._last_frame_index + 1
+        )
+        if contiguous:
+            if not np.array_equal(p, self._state):
+                self._state = self.ALPHA * p + (1.0 - self.ALPHA) * self._state
         else:
-            return self._smooth_numpy(seq)
-
-    def _smooth_torch(self, seq: np.ndarray) -> np.ndarray:
-        """使用 torch LSTM 平滑"""
-        import torch
-        # seq: [num_steps, 2] → [1, num_steps, 2]
-        x = torch.from_numpy(seq).float().unsqueeze(0)
-        with torch.no_grad():
-            smoothed = self._torch_model(x)
-        return smoothed.squeeze(0).numpy()
-
-    def _smooth_numpy(self, seq: np.ndarray) -> np.ndarray:
-        """纯 numpy 简化平滑 (加权平均, 权重偏向最近帧)"""
-        # 指数加权平均, 衰减因子 0.7
-        weights = np.array([0.7 ** (len(seq) - 1 - i) for i in range(len(seq))])
-        weights /= weights.sum()
-        return (seq * weights[:, np.newaxis]).sum(axis=0)
+            # 段首/时间缺口/无时间上下文：不混合历史，从原始点重新开始。
+            self._state = p.copy()
+        if valid_time:
+            self._last_frame_index = int(frame_index)
+            self._last_fps = float(fps)
+        else:
+            self._last_frame_index = None
+            self._last_fps = None
+        return self._state.copy()
 
     def reset(self):
-        """重置缓冲区 (视频切换时调用)"""
-        self._buffer = []
+        """重置时间状态。"""
+        self._state = None
+        self._last_frame_index = None
+        self._last_fps = None
+
 
 
 class KeyFrameAnalyzer:
@@ -493,10 +465,12 @@ class PoseAnalyzer:
 
         return landmarks, 0
 
-    def _smooth_landmarks(self, landmarks: List[Landmark]) -> List[Landmark]:
-        """使用 LSTM 平滑关键点序列
+    def _smooth_landmarks(self, landmarks: List[Landmark], *,
+                          frame_index=None, fps=None) -> List[Landmark]:
+        """确定性因果 EMA 平滑关键点序列。
 
-        对每个关键点维护一个 LSTMSmoother, 逐帧调用 add() 获取平滑坐标。
+        对每个关键点维护一个 LSTMSmoother；仅在显式连续 frame_index/fps
+        下启用时间平滑，无时间上下文或时间缺口时直通原始点，不混合历史。
         """
         if not landmarks:
             return landmarks
@@ -509,7 +483,7 @@ class PoseAnalyzer:
 
             smoother = self._smoothers[lm.name]
             point = np.array([lm.x, lm.y], dtype=np.float32)
-            smoothed_point = smoother.add(point)
+            smoothed_point = smoother.add(point, frame_index=frame_index, fps=fps)
 
             smoothed.append(Landmark(
                 name=lm.name,
@@ -521,22 +495,34 @@ class PoseAnalyzer:
 
         return smoothed
 
-    def analyze_frame(self, frame: np.ndarray) -> Optional[Dict]:
-        """分析单帧图像，提取姿态关键点 + LSTM 平滑 + 计算指标"""
+    def _reset_temporal(self):
+        """视频切换/检测失败时清空时间状态，避免跨段混合。"""
+        self._smoothers = {}
+
+    def analyze_frame(self, frame: np.ndarray, *, frame_index=None, fps=None) -> Optional[Dict]:
+        """分析单帧图像：关键点 + 确定性因果 EMA 平滑（需显式连续时间上下文）+ 指标"""
         landmarks, _ = self._detect_landmarks(frame)
         if landmarks is None:
+            self._reset_temporal()
             return None
 
-        # LSTM 平滑
-        landmarks = self._smooth_landmarks(landmarks)
+        # 确定性因果 EMA 平滑（仅显式连续 frame_index/fps）
+        landmarks = self._smooth_landmarks(landmarks, frame_index=frame_index, fps=fps)
 
         analysis = self._calculate_metrics(landmarks, frame.shape)
         analysis['landmarks'] = landmarks
+        analysis['frame_index'] = frame_index
+        analysis['temporal_smoothing'] = (
+            'contiguous_index_ema'
+            if frame_index is not None and fps is not None
+            else 'disabled_no_time_metadata'
+        )
         return analysis
 
     def _calculate_metrics(self, landmarks: List[Landmark], frame_shape: Tuple) -> Dict:
         """计算关键跑步指标 (兼容 YOLO 17 点 + MediaPipe 33 点名称)"""
         width, height = frame_shape[1], frame_shape[0]
+        self._metric_shape = frame_shape
 
         points = {lm.name: lm for lm in landmarks}
 
@@ -598,6 +584,10 @@ class PoseAnalyzer:
         # 3. 跨步分析
         metrics['stride_analysis'] = self._analyze_stride(points, width)
 
+        # 画布尺寸（供 Gait 等下游做像素几何；与 CalibratedPoseAnalyzer 一致）
+        metrics['frame_width'] = width
+        metrics['frame_height'] = height
+
         # 4. 身体前倾角度
         metrics['body_leang'] = self._calculate_body_leang(points)
 
@@ -623,9 +613,17 @@ class PoseAnalyzer:
         return 'swing'
 
     def _calculate_angle(self, a: Landmark, b: Landmark, c: Landmark) -> float:
-        """计算三点角度 (a-b-c)"""
-        va = np.array([a.x - b.x, a.y - b.y])
-        vc = np.array([c.x - b.x, c.y - b.y])
+        """计算三点角度 (a-b-c)，浮点像素几何 (x*W, y*H)。
+
+        归一化 x/W、y/H 直接做欧氏运算会随画幅纵横比失真；
+        恢复浮点像素（不做整数截断）后角度与画幅无关。
+        """
+        shape = getattr(self, '_metric_shape', None)
+        if shape is None or len(shape) < 2:
+            return 0.0
+        height, width = shape[0], shape[1]
+        va = np.array([(a.x - b.x) * width, (a.y - b.y) * height], dtype=np.float64)
+        vc = np.array([(c.x - b.x) * width, (c.y - b.y) * height], dtype=np.float64)
 
         dot_product = np.dot(va, vc)
         norm_a = np.linalg.norm(va)
@@ -641,10 +639,9 @@ class PoseAnalyzer:
 
     def _calculate_angle_with_ground(self, knee: Landmark, ankle: Landmark, width: int, height: int) -> float:
         """计算小腿与地面夹角"""
-        knee_px = knee.to_pixel(width, height)
-        ankle_px = ankle.to_pixel(width, height)
-        dx = ankle_px[0] - knee_px[0]
-        dy = ankle_px[1] - knee_px[1]
+        # 浮点像素（避免 to_pixel 的整数截断）
+        dx = (ankle.x - knee.x) * width
+        dy = (ankle.y - knee.y) * height
 
         if dx == 0 and dy == 0:
             return 0.0
@@ -653,10 +650,9 @@ class PoseAnalyzer:
 
     def _calculate_shin_angle_signed(self, knee: Landmark, ankle: Landmark, width: int, height: int) -> float:
         """带符号的小腿与地面夹角"""
-        knee_px = knee.to_pixel(width, height)
-        ankle_px = ankle.to_pixel(width, height)
-        dx = ankle_px[0] - knee_px[0]
-        dy = ankle_px[1] - knee_px[1]
+        # 浮点像素（避免 to_pixel 的整数截断）
+        dx = (ankle.x - knee.x) * width
+        dy = (ankle.y - knee.y) * height
         if dx == 0 and dy == 0:
             return 0.0
         mag = math.degrees(math.atan2(abs(dy), abs(dx)))
@@ -689,18 +685,28 @@ class PoseAnalyzer:
         }
 
     def _calculate_body_leang(self, points: Dict) -> float:
-        """计算身体前倾角度"""
+        """身体前倾角：肩-髋连线与竖直方向的夹角（竖直=0°），浮点像素几何。
+
+        旧实现 atan2(归一化水平偏移, 0.5) 是魔法常数，随画幅纵横比失真。
+        """
         if 'LEFT_HIP' not in points or 'RIGHT_HIP' not in points or \
            'LEFT_SHOULDER' not in points or 'RIGHT_SHOULDER' not in points:
             return 0.0
+        shape = getattr(self, '_metric_shape', None)
+        if shape is None or len(shape) < 2:
+            return 0.0
+        height, width = shape[0], shape[1]
 
-        hip_x = (points['LEFT_HIP'].x + points['RIGHT_HIP'].x) / 2
-        shoulder_x = (points['LEFT_SHOULDER'].x + points['RIGHT_SHOULDER'].x) / 2
+        hip_x = (points['LEFT_HIP'].x + points['RIGHT_HIP'].x) / 2 * width
+        hip_y = (points['LEFT_HIP'].y + points['RIGHT_HIP'].y) / 2 * height
+        shoulder_x = (points['LEFT_SHOULDER'].x + points['RIGHT_SHOULDER'].x) / 2 * width
+        shoulder_y = (points['LEFT_SHOULDER'].y + points['RIGHT_SHOULDER'].y) / 2 * height
 
-        horizontal_offset = abs(shoulder_x - hip_x)
-        leang_angle = math.degrees(math.atan2(horizontal_offset, 0.5))
-
-        return leang_angle
+        dx = abs(shoulder_x - hip_x)
+        dy = abs(hip_y - shoulder_y)
+        if dx == 0 and dy == 0:
+            return 0.0
+        return math.degrees(math.atan2(dx, dy))
 
     def _calculate_symmetry(self, points: Dict) -> Dict:
         """计算身体框架对称性"""
@@ -727,18 +733,20 @@ class PoseAnalyzer:
         if not cap.isOpened():
             raise ValueError(f"无法打开视频文件: {video_path}")
 
-        # 重置 LSTM 平滑器
-        self._smoothers = {}
+        # 重置时序平滑状态
+        self._reset_temporal()
 
         results = []
         frame_count = 0
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = float(fps) if fps and math.isfinite(fps) and fps > 0 else None
 
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            analysis = self.analyze_frame(frame)
+            analysis = self.analyze_frame(frame, frame_index=frame_count, fps=fps)
             if analysis:
                 analysis['frame_number'] = frame_count
                 analysis['frame_index'] = frame_count

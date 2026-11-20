@@ -3,7 +3,6 @@
 运行：python3 -m unittest discover -s calibration/tests -p test_camp_report.py -v
 """
 from __future__ import annotations
-
 import tempfile
 
 import copy

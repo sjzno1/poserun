@@ -143,6 +143,13 @@
                     <button class="btn btn-success" id="downloadReportBtn">
                         <i class="fas fa-download me-2"></i>下载报告
                     </button>
+                    <button class="btn btn-outline-primary ms-2" id="exportDocxBtn" style="display:none;">
+                        <i class="fas fa-file-word me-2"></i>导出 DOCX
+                    </button>
+                    <button class="btn btn-outline-danger ms-2" id="exportPdfBtn" style="display:none;">
+                        <i class="fas fa-file-pdf me-2"></i>导出 PDF
+                    </button>
+                    <div class="form-text mt-2" id="exportFormatHint" style="display:none;">DOCX/PDF 由同一报告按营训两页模板（camp-two-page-v1）生成；未知项保持未知，超过 7 帧自动续页、不截断。</div>
                 </div>
             </div>
         </div>
@@ -471,6 +478,47 @@
                         if (err.message !== 'unauthorized') alert('下载失败，请检查网络连接.');
                     }
                 };
+            }
+
+            // DOCX/PDF 导出：仅当本次结果带历史记录 id 时显示（未评分报告分析时后端同步生成双格式）。
+            const exportDocxBtn = document.getElementById('exportDocxBtn');
+            const exportPdfBtn = document.getElementById('exportPdfBtn');
+            const exportHint = document.getElementById('exportFormatHint');
+            exportDocxBtn.style.display = 'none';
+            exportPdfBtn.style.display = 'none';
+            exportHint.style.display = 'none';
+            exportDocxBtn.onclick = null;
+            exportPdfBtn.onclick = null;
+            if (data.history_record != null && data.report_file) {
+                exportDocxBtn.style.display = 'inline-block';
+                exportPdfBtn.style.display = 'inline-block';
+                exportHint.style.display = 'block';
+                exportDocxBtn.onclick = function () { exportReportFormat(data, 'docx'); };
+                exportPdfBtn.onclick = function () { exportReportFormat(data, 'pdf'); };
+            }
+        }
+
+        // 同源报告导出（camp-two-page-v1 模板；未知项保持未知，>7帧续页契约由后端保证）
+        async function exportReportFormat(data, fmt) {
+            try {
+                const resp = await apiFetch('/api/export/report/' + encodeURIComponent(data.history_record) + '/' + fmt);
+                if (!resp.ok) {
+                    let msg = '导出失败';
+                    try { msg = (await resp.json()).error || msg; } catch (e) {}
+                    alert(msg);
+                    return;
+                }
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = String(data.report_file || 'report').replace(/\.[^.]+$/, '') + '.' + fmt;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+            } catch (err) {
+                if (err.message !== 'unauthorized') alert('导出失败，请检查网络连接.');
             }
         }
 

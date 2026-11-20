@@ -1,0 +1,28 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>脚部关键点离线复核</title>
+<style>body{font:15px system-ui;margin:20px;background:#f4f6f8;color:#18232c}main{display:flex;gap:20px;flex-wrap:wrap}canvas{background:white;max-width:95vw;touch-action:none;cursor:crosshair;border:1px solid #bcc}aside{max-width:400px}button,input,select{font:inherit;padding:7px;margin:4px}button{cursor:pointer}#notice{background:#fff4c9;padding:12px}#points{display:grid;grid-template-columns:1fr 1fr}label{display:block}#status{white-space:pre-wrap}</style>
+<h1>脚部关键点离线复核</h1><p id="notice">仅本机处理，不联网、不上传。圆点是模型建议，不是人工真值。左右为人体解剖左右。单张图片不能标注触地/离地事件；本工具不训练、不评分。</p>
+<button id="prev">上一张</button><span id="position"></span><button id="next">下一张</button><button id="save">导出复核JSON</button>
+<main><canvas id="canvas"></canvas><aside><p id="filename"></p><p>选择部位后在图片点击修正。遮挡但可合理标注选1；不可确定选0并清空坐标，不能猜点。</p><div id="points"></div>
+<label>可见性 <select id="visibility"><option value="0">0 未知/不可标注</option><option value="1">1 遮挡但可标注</option><option value="2">2 清晰可见</option></select></label><button id="unknown">当前点标未知</button>
+<label>复核者 <input id="reviewer" placeholder="必填实名或固定复核ID"></label><label><input id="reviewed" type="checkbox">本张已逐点人工复核</label>
+<p>训练授权、跑者/场次分组及测试集划分另行核验，导出不代表允许训练。任何坐标修改都会撤销“已复核”。</p><pre id="status"></pre></aside></main>
+<script>
+'use strict';
+const records=__RECORDS__;
+const names={left_knee:'左膝',right_knee:'右膝',left_ankle:'左踝',right_ankle:'右踝',left_big_toe:'左大脚趾',left_small_toe:'左小脚趾',left_heel:'左脚跟',right_big_toe:'右大脚趾',right_small_toe:'右小脚趾',right_heel:'右脚跟'};
+let index=0,selected='left_heel',currentImage=null,loadVersion=0;
+const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d'),byId=id=>document.getElementById(id);
+function row(){return records[index]}
+function invalidate(){row().reviewed=false;byId('reviewed').checked=false}
+function draw(){if(!currentImage)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(currentImage,0,0,canvas.width,canvas.height);for(const [name,p] of Object.entries(row().points)){if(p.visibility===0||p.x===null||p.y===null)continue;ctx.beginPath();ctx.arc(p.x,p.y,name===selected?6:4,0,Math.PI*2);ctx.fillStyle=name===selected?'#ff2020':name.startsWith('left')?'#00cd65':'#008dff';ctx.fill();ctx.strokeStyle='white';ctx.stroke()}let p=row().points[selected];byId('visibility').value=String(p.visibility);byId('status').textContent=names[selected]+'\n坐标 '+JSON.stringify([p.x,p.y])+'\n模型建议分数（非准确率） '+p.proposal_score}
+function load(){let r=row(),version=++loadVersion;currentImage=null;canvas.width=r.width;canvas.height=r.height;ctx.clearRect(0,0,canvas.width,canvas.height);byId('position').textContent=(index+1)+' / '+records.length;byId('filename').textContent=r.image_path;byId('reviewer').value=r.reviewer||'';byId('reviewed').checked=r.reviewed;const img=new Image();img.onload=()=>{if(version!==loadVersion)return;currentImage=img;draw()};img.src=r.image_data;byId('prev').disabled=index===0;byId('next').disabled=index===records.length-1}
+for(const [key,name] of Object.entries(names)){let b=document.createElement('button');b.type='button';b.textContent=name;b.dataset.point=key;b.onclick=()=>{selected=key;draw()};byId('points').appendChild(b)}
+canvas.onclick=e=>{const b=canvas.getBoundingClientRect(),p=row().points[selected];p.x=Math.min(row().width-1,Math.max(0,(e.clientX-b.left)*canvas.width/b.width));p.y=Math.min(row().height-1,Math.max(0,(e.clientY-b.top)*canvas.height/b.height));p.visibility=2;invalidate();draw()};
+byId('visibility').onchange=()=>{let p=row().points[selected],v=Number(byId('visibility').value);if(v!==0&&(p.x===null||p.y===null)){byId('status').textContent='请先在图片点击指定坐标';byId('visibility').value='0';return}p.visibility=v;if(v===0){p.x=null;p.y=null}invalidate();draw()};
+byId('unknown').onclick=()=>{Object.assign(row().points[selected],{x:null,y:null,visibility:0});invalidate();draw()};
+byId('reviewer').oninput=()=>{row().reviewer=byId('reviewer').value.trim();invalidate()};
+byId('reviewed').onchange=()=>{if(byId('reviewed').checked&&!row().reviewer){byId('reviewed').checked=false;byId('status').textContent='请先填写复核者';return}row().reviewed=byId('reviewed').checked};
+byId('prev').onclick=()=>{if(index>0){index--;load()}};byId('next').onclick=()=>{if(index<records.length-1){index++;load()}};
+byId('save').onclick=()=>{const data=records.map(({image_data,...r})=>r);const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='foot-reviewed.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);byId('status').textContent='已导出；人工复核与训练授权分别校验，尚未训练。'};
+load();
+</script></html>

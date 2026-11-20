@@ -16,3 +16,8 @@ PyMuPDF>=1.24
 # 纯 CPU 环境可先装 CPU 版 torch 以减小体积：
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 ultralytics>=8.3,<9
+
+# P1 running management (lightweight test setup: requirements-running.txt)
+fitparse==1.2.0
+keyring>=25,<26
+cryptography>=44

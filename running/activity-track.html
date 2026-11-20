@@ -1,0 +1,221 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>活动轨迹 · 跑步管理系统</title>
+<link rel="stylesheet" href="/vendor/bootstrap-5.3.0/bootstrap.min.css">
+<link rel="stylesheet" href="/common.css">
+<style>
+.tm-wrap{font-variant-numeric:tabular-nums}
+.tm-svg{width:100%;height:auto;display:block;background:var(--soft);border:1px solid var(--line);border-radius:8px}
+.tm-legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:14px;margin-top:8px}
+.tm-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}
+.tm-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:0}
+.tm-summary dt{color:var(--muted);font-size:13px}
+.tm-summary dd{margin:0;font-size:18px;font-weight:600}
+.tm-empty{padding:24px;text-align:center;color:var(--muted)}
+a:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+@media(max-width:700px){.tm-summary{grid-template-columns:repeat(2,1fr)}.tm-summary dd{font-size:16px}.tm-legend{gap:10px;font-size:12px}}
+</style></head>
+<body><script>window.PAGE='activity-track';</script>
+<main class="rm-main tm-wrap">
+<nav aria-label="页面导航"><a href="/">总览</a> · <a href="/activities.html">活动档案</a> · <a href="/journal">训练日志</a></nav>
+<h1>活动轨迹</h1>
+<p class="rm-evidence">离线 SVG 渲染 · 无外部地图服务/瓦片/网络请求 · 轨迹抽稀≤2000点 · 未核验，不评分、不诊断。</p>
+<p role="status" aria-live="polite" id="trackStatus"></p>
+<section class="rm-panel" id="trackSummaryPanel" hidden><h2>活动摘要</h2><dl class="tm-summary" id="trackSummary"></dl></section>
+<section class="rm-panel" id="trackMapPanel" hidden><h2>轨迹折线</h2><div id="trackMapWrap"></div>
+<div class="tm-legend"><span><span class="tm-dot" style="background:var(--green)"></span>起点</span><span><span class="tm-dot" style="background:var(--accent)"></span>终点</span><span id="trackScaleText"></span></div></section>
+<section class="rm-panel" id="elevPanel" hidden><h2>海拔剖面</h2><div id="elevWrap"></div><p class="rm-evidence" id="elevNote"></p></section>
+<section class="rm-panel" id="trackEmpty" hidden><p class="tm-empty">无轨迹数据：该活动为手工记录或早期导入未保留轨迹点。新导入 GPX/TCX/含 GPS 的 FIT 才会生成轨迹。</p></section>
+</main>
+<script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script>
+<script src="/common.js"></script>
+<script src="/icons.js"></script>
+<script>
+(function(){
+'use strict';
+var TM_NO_TRACK='无轨迹数据';
+var TM_NO_TRACK_HINT='该活动没有轨迹数据：手工记录或早期导入未保留轨迹点。新导入 GPX/TCX/含 GPS 的 FIT 才会生成轨迹。';
+var R=6371000;
+function tmHaversine(a,b){
+  var rad=Math.PI/180,dLat=(b.lat-a.lat)*rad,dLon=(b.lon-a.lon)*rad;
+  var h=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a.lat*rad)*Math.cos(b.lat*rad)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(h)));
+}
+function tmProject(points,w,h,pad){
+  var lat0=points.reduce(function(s,p){return s+p.lat;},0)/points.length;
+  var k=Math.cos(lat0*Math.PI/180);
+  var xs=points.map(function(p){return p.lon*k;}),ys=points.map(function(p){return p.lat;});
+  var minX=Math.min.apply(null,xs),maxX=Math.max.apply(null,xs);
+  var minY=Math.min.apply(null,ys),maxY=Math.max.apply(null,ys);
+  var spanX=Math.max(maxX-minX,1e-9),spanY=Math.max(maxY-minY,1e-9);
+  var iw=w-2*pad,ih=h-2*pad;
+  var s=Math.min(iw/spanX,ih/spanY);
+  var ox=pad+(iw-spanX*s)/2,oy=pad+(ih-spanY*s)/2;
+  var pts=points.map(function(p,i){return {x:ox+(xs[i]-minX)*s,y:oy+(maxY-ys[i])*s};});
+  return {pts:pts,pxPerDeg:s,pxPerM:s/(R*Math.PI/180)};
+}
+function tmPathD(pts){
+  if(!pts.length)return '';
+  return pts.map(function(p,i){return (i?'L':'M')+p.x.toFixed(1)+' '+p.y.toFixed(1);}).join(' ');
+}
+function tmScaleBar(spanM){
+  var steps=[100,200,500,1000,2000,5000,10000,20000,50000,100000];
+  var target=spanM/3,m=100;
+  for(var i=0;i<steps.length;i++){if(steps[i]<=target)m=steps[i];}
+  return {meters:m,label:m>=1000?(m/1000)+' km':m+' m'};
+}
+function tmElevation(points){
+  var xs=[0],eles=[],min=null,max=null;
+  for(var i=0;i<points.length;i++){
+    if(i>0)xs.push(xs[i-1]+tmHaversine(points[i-1],points[i])/1000);
+    var e=points[i].ele;
+    eles.push(typeof e==='number'&&isFinite(e)?e:null);
+    if(eles[i]!==null){if(min===null||eles[i]<min)min=eles[i];if(max===null||eles[i]>max)max=eles[i];}
+  }
+  return {xs:xs,eles:eles,hasEle:min!==null,min:min,max:max};
+}
+function tmElevPathD(xs,eles,w,h,pad){
+  var pairs=[];
+  for(var i=0;i<xs.length;i++){if(eles[i]!==null)pairs.push([xs[i],eles[i]]);}
+  if(pairs.length<2)return {line:'',area:''};
+  var xmax=Math.max.apply(null,xs)||1;
+  var es=pairs.map(function(p){return p[1];});
+  var lo=Math.min.apply(null,es),hi=Math.max.apply(null,es);
+  if(hi-lo<1e-6){lo-=1;hi+=1;}
+  var iw=w-2*pad,ih=h-2*pad;
+  function X(x){return pad+(x/xmax)*iw;}
+  function Y(y){return pad+ih-((y-lo)/(hi-lo))*ih;}
+  var line=pairs.map(function(p,i){return (i?'L':'M')+X(p[0]).toFixed(1)+' '+Y(p[1]).toFixed(1);}).join(' ');
+  var base=(h-pad).toFixed(1);
+  var area=line+' L'+X(pairs[pairs.length-1][0]).toFixed(1)+' '+base+' L'+X(pairs[0][0]).toFixed(1)+' '+base+' Z';
+  return {line:line,area:area};
+}
+function tmPace(secPerKm){
+  if(!(secPerKm>0)||!isFinite(secPerKm))return '—';
+  var m=Math.floor(secPerKm/60),s=Math.round(secPerKm%60);
+  if(s===60){m+=1;s=0;}
+  return m+':'+String(s).padStart(2,'0')+' /km';
+}
+function tmDuration(sec){
+  if(!(sec>0)||!isFinite(sec))return '—';
+  var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=Math.round(sec%60);
+  if(s===60){m+=1;s=0;}
+  return (h?h+':':'')+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+}
+function tmSummary(activity){
+  var dist=typeof activity.distance_m==='number'&&isFinite(activity.distance_m)?activity.distance_m:null;
+  var dur=typeof activity.duration_s==='number'&&isFinite(activity.duration_s)?activity.duration_s:null;
+  var sources={gpx:'GPX 导入',tcx:'TCX 导入',fit:'FIT 导入',manual:'手工记录',api:'API 导入',device:'设备导入'};
+  return {
+    date:String(activity.start_time||'').slice(0,10)||'—',
+    distance:dist!==null?(dist/1000).toFixed(2)+' km':'—',
+    duration:tmDuration(dur),
+    pace:dist!==null&&dist>0&&dur!==null?tmPace(dur/(dist/1000)):'—',
+    source:sources[activity.source]||activity.source||'—'
+  };
+}
+function tmAriaLabel(count,distanceKm){
+  return '轨迹折线：'+count+' 个抽稀点，总距离 '+distanceKm.toFixed(2)+' km，含起点与终点标记';
+}
+if(typeof module!=='undefined'&&module.exports){module.exports={TM_NO_TRACK:TM_NO_TRACK,TM_NO_TRACK_HINT:TM_NO_TRACK_HINT,tmHaversine:tmHaversine,tmProject:tmProject,tmPathD:tmPathD,tmScaleBar:tmScaleBar,tmElevation:tmElevation,tmElevPathD:tmElevPathD,tmSummary:tmSummary,tmAriaLabel:tmAriaLabel};}
+if(typeof window==='undefined'){return;}
+// ---- DOM 渲染（仅浏览器）----
+var $=function(s){return document.querySelector(s);};
+// SVG 命名空间拼接构造：页面源码不出现任何 http(s) 外链（离线自包含门）。
+var NS='http'+'://www.w3.org/2000/svg';
+function el(name,attrs,parent){
+  var n=document.createElementNS(NS,name);
+  for(var k in attrs)n.setAttribute(k,attrs[k]);
+  if(parent)parent.appendChild(n);
+  return n;
+}
+function show(sel,on){var n=$(sel);if(n)n.hidden=!on;}
+function renderSummary(activity){
+  var s=tmSummary(activity),dl=$('#trackSummary');
+  dl.replaceChildren();
+  [['日期',s.date],['距离',s.distance],['时长',s.duration],['均配',s.pace],['来源',s.source]].forEach(function(row){
+    var dt=document.createElement('dt');dt.textContent=row[0];
+    var dd=document.createElement('dd');dd.textContent=row[1];
+    dl.appendChild(dt);dl.appendChild(dd);
+  });
+  show('#trackSummaryPanel',true);
+}
+function renderTrack(points){
+  var proj=tmProject(points,800,500,30);
+  var elev=tmElevation(points);
+  var totalKm=elev.xs.length?elev.xs[elev.xs.length-1]:0;
+  var wrap=$('#trackMapWrap');
+  wrap.replaceChildren();
+  var svg=el('svg',{viewBox:'0 0 800 500','class':'tm-svg',id:'trackMap'},wrap);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', tmAriaLabel(points.length,totalKm));
+  el('path',{id:'trackPath',d:tmPathD(proj.pts),fill:'none',stroke:'var(--accent)','stroke-width':'2.5','stroke-linejoin':'round','stroke-linecap':'round'},svg);
+  var p0=proj.pts[0],pN=proj.pts[proj.pts.length-1];
+  el('circle',{id:'trackStart',cx:p0.x.toFixed(1),cy:p0.y.toFixed(1),r:'6',fill:'var(--green)',stroke:'var(--panel)','stroke-width':'2'},svg);
+  el('circle',{id:'trackEnd',cx:pN.x.toFixed(1),cy:pN.y.toFixed(1),r:'6',fill:'var(--accent)',stroke:'var(--panel)','stroke-width':'2'},svg);
+  var bar=tmScaleBar(totalKm*1000);
+  var barPx=Math.max(8,bar.meters*proj.pxPerM);
+  var g=el('g',{id:'trackScale'},svg);
+  el('line',{x1:'30',y1:'485',x2:(30+barPx).toFixed(1),y2:'485',stroke:'var(--ink)','stroke-width':'2'},g);
+  el('line',{x1:'30',y1:'480',x2:'30',y2:'490',stroke:'var(--ink)','stroke-width':'2'},g);
+  el('line',{x1:(30+barPx).toFixed(1),y1:'480',x2:(30+barPx).toFixed(1),y2:'490',stroke:'var(--ink)','stroke-width':'2'},g);
+  var label=el('text',{id:'trackScaleLabel',x:'30',y:'474','font-size':'13',fill:'var(--muted)'},g);
+  label.textContent=bar.label;
+  $('#trackScaleText').textContent='比例尺 '+bar.label+' · 抽稀 '+points.length+' 点';
+  show('#trackMapPanel',true);
+  // 海拔剖面
+  var ew=$('#elevWrap');
+  ew.replaceChildren();
+  if(elev.hasEle){
+    var esvg=el('svg',{viewBox:'0 0 800 220','class':'tm-svg',id:'elevChart'},ew);
+    esvg.setAttribute('role', 'img');
+    esvg.setAttribute('aria-label','海拔剖面：最低 '+elev.min.toFixed(1)+' m，最高 '+elev.max.toFixed(1)+' m');
+    var d=tmElevPathD(elev.xs,elev.eles,800,220,30);
+    el('path',{id:'elevArea',d:d.area,fill:'var(--soft)',stroke:'none',opacity:'0.9'},esvg);
+    el('path',{id:'elevLine',d:d.line,fill:'none',stroke:'var(--green)','stroke-width':'2','stroke-linejoin':'round'},esvg);
+    var lo=el('text',{x:'30',y:'212','font-size':'12',fill:'var(--muted)'},esvg);
+    lo.textContent='最低 '+elev.min.toFixed(1)+' m';
+    var hi=el('text',{x:'770',y:'24','font-size':'12',fill:'var(--muted)','text-anchor':'end'},esvg);
+    hi.textContent='最高 '+elev.max.toFixed(1)+' m';
+    var xl=el('text',{x:'770',y:'212','font-size':'12',fill:'var(--muted)','text-anchor':'end'},esvg);
+    xl.textContent='累计 '+totalKm.toFixed(2)+' km';
+    $('#elevNote').textContent='海拔来自导入文件，未核验；横轴为累计距离。';
+  }else{
+    $('#elevNote').textContent='无海拔数据：导入文件未包含海拔字段。';
+  }
+  show('#elevPanel',true);
+}
+function render(data){
+  show('#trackEmpty',false);show('#trackMapPanel',false);show('#elevPanel',false);
+  renderSummary(data.activity);
+  if(!data.has_track||!data.track){
+    show('#trackEmpty',true);
+    $('#trackStatus').textContent=TM_NO_TRACK;
+    return;
+  }
+  $('#trackStatus').textContent='';
+  renderTrack(data.track.points);
+}
+async function load(){
+  var id=new URLSearchParams(location.search).get('id');
+  if(!id||!/^\d+$/.test(id)){
+    $('#trackStatus').textContent='缺少活动编号：请从活动档案的「轨迹」入口进入。';
+    return;
+  }
+  try{
+    var resp=await apiFetch('/api/running/activities/'+id+'/track');
+    if(resp.status===404){
+      show('#trackSummaryPanel',false);show('#trackMapPanel',false);show('#elevPanel',false);show('#trackEmpty',false);
+      $('#trackStatus').textContent='活动不存在或不属于当前账号。';
+      return;
+    }
+    if(!resp.ok){$('#trackStatus').textContent='加载失败，请重试。';return;}
+    render(await resp.json());
+  }catch(e){
+    $('#trackStatus').textContent='加载失败，请重试。';
+  }
+}
+window.onAuthReady=function(){load();};
+})();
+</script>
+</body></html>

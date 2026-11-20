@@ -118,31 +118,47 @@ class CalibratedPoseAnalyzer(PoseAnalyzer):
         if getattr(self, '_primary_subject', None) is None:
             self._primary_subject = PrimarySubjectSelector()
             self._subject_frame_counter = 0
-        selector = self._primary_subject
         if self._yolo_model is None:
             raise RuntimeError('姿态检测模型不可用')
         # Preserve the detector threshold, including background/competing people.
         results = self._yolo_model.predict(frame, conf=0.05, verbose=False)
         points = results[0].keypoints if results else None
         boxes = getattr(results[0], 'boxes', None) if results else None
+        return self._select_primary_landmarks(
+            frame, getattr(points, 'xy', None), getattr(points, 'conf', None),
+            getattr(boxes, 'xyxy', None))
+
+    def _select_primary_landmarks(self, frame, xy, conf, boxes):
+        """Primary-subject selection + landmark construction WITHOUT YOLO predict.
+
+        Local path passes model tensors; the remote (offload) path passes server
+        candidate arrays. Both are promoted to float64 by primary_subject.array(),
+        so selection/masking/normalization are identical to production. Only the
+        detector forward is offloaded; smoothing/measurement stay local.
+        """
+        from primary_subject import PrimarySubjectSelector
+        if getattr(self, '_primary_subject', None) is None:
+            self._primary_subject = PrimarySubjectSelector()
+            self._subject_frame_counter = 0
+        selector = self._primary_subject
         index = getattr(self, '_subject_requested_index', None)
         if index is None:
             index = getattr(self, '_video_frame_index', None)
         if index is None:
             index = self._subject_frame_counter
         self._subject_frame_counter += 1
-        selected = selector.select(frame, getattr(points, 'xy', None),
-                                   getattr(points, 'conf', None),
-                                   getattr(boxes, 'xyxy', None), index,
-                                   fps=getattr(self,'_subject_requested_fps',None))
+        selected = selector.select(frame, xy, conf, boxes, index,
+                                   fps=getattr(self, '_subject_requested_fps', None))
         self._detection_status = selector.status
         if selected is None:
             return None, 0
-        xy, confidence = points.xy[selected], points.conf[selected]
+        sel_xy = xy[selected]
+        sel_conf = conf[selected] if conf is not None else None
         h, w = frame.shape[:2]
         masked_joints = set(selector.masked_joints)
-        landmarks = [Landmark(name, float(xy[i][0])/w, float(xy[i][1])/h,
-                              0., 0. if i in masked_joints else float(confidence[i]))
+        landmarks = [Landmark(name, float(sel_xy[i][0])/w, float(sel_xy[i][1])/h,
+                              0., 0. if i in masked_joints else
+                              (float(sel_conf[i]) if sel_conf is not None else 1.0))
                      for i, name in enumerate(YOLO_POSE_LANDMARK_NAMES)]
         return landmarks, 0
 
@@ -177,11 +193,17 @@ class CalibratedPoseAnalyzer(PoseAnalyzer):
                 out.append(lm)
         return out
 
-    def analyze_frame(self, frame, *, frame_index=None, fps=None):
+    def analyze_frame(self, frame, *, frame_index=None, fps=None, landmarks_override=None):
         self._subject_requested_index = frame_index
         self._subject_requested_fps = fps
         try:
-            landmarks, _ = self._detect_landmarks(frame)
+            if landmarks_override is not None:
+                # Remote offload: selection already ran on the server candidates
+                # via _select_primary_landmarks; skip YOLO predict, go straight to
+                # local smoothing/measurement. None => unchanged local path.
+                landmarks = landmarks_override
+            else:
+                landmarks, _ = self._detect_landmarks(frame)
         finally:
             self._subject_requested_index = None
             self._subject_requested_fps = None

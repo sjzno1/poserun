@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>跑鞋装备 · 澄明训练台</title><link rel="stylesheet" href="/vendor/bootstrap-5.3.0/bootstrap.min.css"><link rel="stylesheet" href="/common.css">
+<style>
+/* 页面级补充：共享令牌与三主题来自 /common.css 与 /themes/theme-system.css（本地，无 CDN）。 */
+#gearForm p,#linkForm p{margin:0 0 14px}
+#gearForm label,#linkForm label{display:block;font-weight:600;margin-bottom:4px}
+#gearForm input,#gearForm textarea,#linkForm select{width:100%;max-width:420px;padding:10px;background:var(--panel,#fff);color:var(--ink,inherit);border:1px solid var(--line,#dce4ec);border-radius:8px}
+#gearForm input:focus,#gearForm textarea:focus,#linkForm select:focus{outline:3px solid var(--accent,#165cc6);outline-offset:1px}
+#gearForm button,#linkForm button{min-height:44px;margin:8px 8px 8px 0;padding:8px 18px;border-radius:8px;border:1px solid var(--accent,#165cc6);background:var(--soft,#e9f1ff);color:var(--accent,#165cc6);font-weight:600;cursor:pointer}
+#gearForm button:disabled,#linkForm button:disabled{opacity:.55;cursor:wait}
+#gearForm button[type=submit]{background:var(--accent,#165cc6);color:#fff}
+.rm-evidence-tag{display:inline-block;padding:2px 10px;border:1px solid var(--line,#dce4ec);border-radius:999px;background:var(--soft,#e9f1ff);color:var(--ink,inherit);font-size:13px}
+.rm-km{font-variant-numeric:tabular-nums;font-weight:600;font-size:22px}
+#gearList li,#retiredList li,#gearActivities li{display:grid;gap:6px}
+#gearList .rm-actions button,#gearDetailPanel button{min-height:40px;margin:0 8px 0 0;padding:6px 14px;border-radius:8px;border:1px solid var(--line,#dce4ec);background:var(--panel,#fff);color:var(--ink,inherit);cursor:pointer}
+#gearList .rm-actions button.rm-danger{border-color:#e74c3c;color:#e74c3c}
+:focus-visible{outline:3px solid var(--accent,#165cc6);outline-offset:3px}
+@media(max-width:700px){#gearForm input,#gearForm textarea,#linkForm select{max-width:100%}.rm-km{font-size:18px}}
+</style></head>
+<body><script>window.PAGE='gear';</script><main class="rm-main">
+<p>澄明训练台 ／ 训练档案</p><h1>跑鞋装备</h1>
+<p>记录每双跑鞋的服役与里程。总里程为<strong>已导入活动内合计</strong>（本人全部未删除关联活动，缺距离活动不计入且标注），未核验；退役为软删除，历史可审计。</p>
+<p role="status" id="gearStatus" aria-live="polite"></p>
+<section class="rm-panel">
+<h2 id="gearFormTitle">新增跑鞋</h2>
+<form id="gearForm">
+<p><label for="gearName">名称</label><input type="text" id="gearName" required maxlength="120" placeholder="如 日常训练鞋"></p>
+<p><label for="gearBrand">品牌型号</label><input type="text" id="gearBrand" maxlength="120" placeholder="选填"></p>
+<p><label for="gearStarted">启用日期</label><input type="date" id="gearStarted"></p>
+<p><label for="gearThreshold">最大里程提示阈值（km）</label><input type="number" id="gearThreshold" min="0" step="1" inputmode="decimal" placeholder="选填，如 600；仅提示，非诊断"></p>
+<p><label for="gearNotes">备注</label><textarea id="gearNotes" rows="2" maxlength="2000" placeholder="选填，最多 2000 字"></textarea></p>
+<button type="submit" id="gearSubmit">保存</button><button type="button" id="gearCancel" hidden>取消</button>
+</form>
+</section>
+<section class="rm-panel">
+<h2>我的跑鞋</h2>
+<p class="rm-evidence">证据标签：<span class="rm-evidence-tag">已导入活动内合计 · 未核验</span> · 单位 km · 时间窗：全部未删除关联活动</p>
+<ul id="gearList" class="rm-list"></ul>
+<p id="gearEmpty" class="rm-evidence" hidden>暂无跑鞋。新增一双，开始把里程记到鞋上。</p>
+</section>
+<section class="rm-panel">
+<h2>活动关联跑鞋</h2>
+<p class="rm-evidence">每个活动至多关联一双鞋；手工补录与设备导入（FIT/佳明）活动均可关联。换鞋后里程自动重算。</p>
+<form id="linkForm">
+<p><label for="linkActivity">活动</label><select id="linkActivity"></select></p>
+<p><label for="linkGear">跑鞋</label><select id="linkGear"></select></p>
+<p class="rm-evidence" id="linkCurrent">选择活动后显示当前关联。</p>
+<button type="submit" id="linkSubmit">关联 / 换鞋</button><button type="button" id="linkRemove">解除关联</button>
+</form>
+</section>
+<section class="rm-panel" id="gearDetailPanel" hidden>
+<h2 id="gearDetailTitle">关联活动</h2>
+<p class="rm-evidence" id="gearDetailEvidence"></p>
+<ul id="gearActivities" class="rm-list"></ul>
+<p><button type="button" id="gearDetailClose">关闭</button></p>
+</section>
+<section class="rm-panel">
+<h2>已退役跑鞋</h2>
+<p class="rm-evidence">退役保留历史关联与里程，供审计；不再接受新关联。</p>
+<ul id="retiredList" class="rm-list"></ul>
+<p id="retiredEmpty" class="rm-evidence" hidden>暂无退役跑鞋。</p>
+</section>
+<a href="/journal">训练日志</a> · <a href="/weekly-report">查看周报</a> · <a href="/manual-entry">手工补录</a> · <a href="/">返回总览</a>
+</main>
+<script>
+(function () {
+  'use strict';
+  // 纯函数（node --test 复用，无 DOM 依赖）
+  function fmtKm(km) { return km == null ? '—' : Number(km).toFixed(2) + ' km'; }
+  function mileageText(totalKm, missingCount) {
+    var text = fmtKm(totalKm);
+    if (missingCount > 0) text += '（另有 ' + missingCount + ' 条缺距离活动未计入）';
+    return text;
+  }
+  function thresholdHint(totalKm, maxKm) {
+    if (!(maxKm > 0) || totalKm == null) return '';
+    if (totalKm >= maxKm) return '已达提示阈值 ' + fmtKm(maxKm) + '（仅提示，非诊断）';
+    return '距提示阈值 ' + fmtKm(maxKm) + ' 还差 ' + fmtKm(maxKm - totalKm);
+  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = { fmtKm: fmtKm, mileageText: mileageText, thresholdHint: thresholdHint };
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  var $ = function (id) { return document.getElementById(id); };
+  if (!$('gearForm')) return;
+  var EVIDENCE = '已导入活动内合计 · 未核验';
+  var editingId = null, activitiesCache = [];
+  function status(text) { var el = $('gearStatus'); if (el) el.textContent = text || ''; }
+  function api(path, options) {
+    options = options || {};
+    var headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+    var token = localStorage.getItem('poserun_token');
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    options.headers = headers;
+    return fetch('/api/running' + path, options).then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (data) {
+        if (resp.status === 401) { location.href = '/'; throw new Error('请先登录'); }
+        if (!resp.ok) throw new Error(data.error || '请求失败');
+        return data;
+      });
+    });
+  }
+  var SOURCE = { fit: 'FIT 导入 · 未核验', api: '佳明导入 · 未核验', manual: '手工记录 · 未核验', demo: '演示数据 · 非实测' };
+  function fmtDate(iso) { return iso ? String(iso).slice(0, 10) : '未填'; }
+  function button(label, fn, danger) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    if (danger) b.className = 'rm-danger';
+    b.addEventListener('click', fn);
+    return b;
+  }
+  function gearLine(g, retired) {
+    var li = document.createElement('li');
+    var head = document.createElement('p');
+    head.textContent = g.name + (g.brand_model ? ' · ' + g.brand_model : '') + ' · 启用 ' + fmtDate(g.started_on) +
+      (retired ? ' · 退役 ' + fmtDate(g.retired_on) : '');
+    var km = document.createElement('p');
+    km.className = 'rm-km';
+    km.textContent = mileageText(g.total_distance_km, g.missing_distance_count);
+    var tag = document.createElement('span');
+    tag.className = 'rm-evidence-tag';
+    tag.textContent = EVIDENCE + ' · ' + g.activity_count + ' 条活动' + (retired ? ' · 已退役（历史保留）' : '');
+    li.append(head, km, tag);
+    var hint = thresholdHint(g.total_distance_km, g.max_distance_km);
+    if (hint) { var hp = document.createElement('p'); hp.className = 'rm-evidence'; hp.textContent = hint; li.append(hp); }
+    if (g.notes) { var np = document.createElement('p'); np.className = 'rm-evidence'; np.textContent = g.notes; li.append(np); }
+    var actions = document.createElement('p');
+    actions.className = 'rm-actions';
+    actions.append(button('查看关联', function () { showDetail(g.id); }));
+    if (!retired) {
+      actions.append(button('编辑', function () { startEdit(g); }),
+        button('设为默认', function () { setDefault(g.id); }),
+        button('退役', function () { retireGear(g.id); }, true));
+    }
+    li.append(actions);
+    return li;
+  }
+  function renderGear(rows, defaultId) {
+    var list = $('gearList'), retired = $('retiredList');
+    list.replaceChildren(); retired.replaceChildren();
+    var active = rows.filter(function (g) { return !g.deleted_at; });
+    var gone = rows.filter(function (g) { return g.deleted_at; });
+    $('gearEmpty').hidden = active.length > 0;
+    $('retiredEmpty').hidden = gone.length > 0;
+    active.forEach(function (g) {
+      var li = gearLine(g, false);
+      if (g.id === defaultId) {
+        var mark = document.createElement('span');
+        mark.className = 'rm-evidence-tag'; mark.textContent = '默认鞋';
+        li.querySelector('p').append(document.createTextNode(' '), mark);
+      }
+      list.append(li);
+    });
+    gone.forEach(function (g) { retired.append(gearLine(g, true)); });
+    var select = $('linkGear');
+    select.replaceChildren();
+    active.forEach(function (g) {
+      var opt = document.createElement('option');
+      opt.value = String(g.id);
+      opt.textContent = '#' + g.id + ' ' + g.name + (g.id === defaultId ? '（默认）' : '');
+      select.append(opt);
+    });
+    if (!active.length) {
+      var opt = document.createElement('option');
+      opt.value = ''; opt.textContent = '暂无可选跑鞋';
+      select.append(opt);
+    }
+  }
+  function loadGear() {
+    return api('/gear?include_retired=1').then(function (data) { renderGear(data.gear, data.default_gear_id); });
+  }
+  function loadActivities() {
+    return api('/activities?limit=500').then(function (data) {
+      activitiesCache = data.activities;
+      var select = $('linkActivity');
+      select.replaceChildren();
+      activitiesCache.forEach(function (a) {
+        var opt = document.createElement('option');
+        opt.value = String(a.id);
+        opt.textContent = '#' + a.id + ' · ' + String(a.start_time).slice(0, 10) + ' · ' +
+          (a.distance_m == null ? '距离缺测' : (a.distance_m / 1000).toFixed(2) + ' km') + ' · ' + (SOURCE[a.source] || '其他来源');
+        select.append(opt);
+      });
+      if (!activitiesCache.length) {
+        var opt = document.createElement('option');
+        opt.value = ''; opt.textContent = '暂无活动；请先导入 FIT 或手工补录';
+        select.append(opt);
+      }
+      return refreshLinkCurrent();
+    });
+  }
+  function refreshLinkCurrent() {
+    var aid = $('linkActivity').value;
+    if (!aid) { $('linkCurrent').textContent = '暂无可关联的活动。'; return Promise.resolve(); }
+    return api('/activities/' + aid + '/gear').then(function (data) {
+      $('linkCurrent').textContent = data.link
+        ? '活动 #' + aid + ' 当前关联：#' + data.link.gear_id + ' ' + data.link.name + (data.link.gear_deleted ? '（已退役，历史保留）' : '')
+        : '活动 #' + aid + ' 尚未关联跑鞋。';
+    }).catch(function (e) { $('linkCurrent').textContent = e.message; });
+  }
+  function readForm() {
+    var name = $('gearName').value.trim();
+    if (!name) return null;
+    var payload = { name: name };
+    var brand = $('gearBrand').value.trim();
+    if (brand) payload.brand_model = brand;
+    if ($('gearStarted').value) payload.started_on = $('gearStarted').value;
+    if ($('gearThreshold').value !== '') payload.max_distance_km = Number($('gearThreshold').value);
+    var notes = $('gearNotes').value.trim();
+    if (notes) payload.notes = notes;
+    return payload;
+  }
+  function resetForm() {
+    editingId = null;
+    $('gearForm').reset();
+    $('gearFormTitle').textContent = '新增跑鞋';
+    $('gearSubmit').textContent = '保存';
+    $('gearCancel').hidden = true;
+  }
+  function startEdit(g) {
+    editingId = g.id;
+    $('gearName').value = g.name;
+    $('gearBrand').value = g.brand_model || '';
+    $('gearStarted').value = g.started_on || '';
+    $('gearThreshold').value = g.max_distance_km == null ? '' : String(g.max_distance_km);
+    $('gearNotes').value = g.notes || '';
+    $('gearFormTitle').textContent = '编辑跑鞋 #' + g.id;
+    $('gearSubmit').textContent = '保存更改';
+    $('gearCancel').hidden = false;
+    $('gearName').focus();
+    $('gearForm').scrollIntoView();
+  }
+  function setDefault(gid) {
+    return api('/gear/default', { method: 'PUT', body: JSON.stringify({ gear_id: gid }) })
+      .then(function () { status('已设为默认鞋。'); return loadGear(); })
+      .catch(function (e) { status(e.message); });
+  }
+  function retireGear(gid) {
+    if (!confirm('退役这双跑鞋？软删除可审计：历史关联与里程保留，不再接受新关联。')) return;
+    return api('/gear/' + gid + '/retire', { method: 'POST', body: JSON.stringify({}) })
+      .then(function () { status('已退役，历史保留。'); return loadGear(); })
+      .catch(function (e) { status(e.message); });
+  }
+  function showDetail(gid) {
+    return api('/gear/' + gid).then(function (data) {
+      var g = data.gear;
+      $('gearDetailTitle').textContent = '跑鞋 #' + g.id + ' ' + g.name + ' 的关联活动';
+      $('gearDetailEvidence').textContent = EVIDENCE + ' · ' + mileageText(g.total_distance_km, g.missing_distance_count) +
+        ' · 时间窗：全部未删除关联活动' + (g.deleted_at ? ' · 已退役 ' + fmtDate(g.retired_on) : '');
+      var ul = $('gearActivities');
+      ul.replaceChildren();
+      if (!g.activities.length) {
+        var li = document.createElement('li');
+        li.textContent = '暂无关联活动；可在上方「活动关联跑鞋」中关联。';
+        ul.append(li);
+      }
+      g.activities.forEach(function (a) {
+        var li = document.createElement('li');
+        li.textContent = '活动 #' + a.id + ' · ' + String(a.start_time).slice(0, 10) + ' · ' +
+          (a.distance_m == null ? '距离缺测（不计入里程）' : (a.distance_m / 1000).toFixed(2) + ' km') +
+          ' · ' + (SOURCE[a.source] || '其他来源') + ' · 关联于 ' + String(a.linked_at).slice(0, 10);
+        ul.append(li);
+      });
+      $('gearDetailPanel').hidden = false;
+      $('gearDetailPanel').scrollIntoView();
+    }).catch(function (e) { status(e.message); });
+  }
+  $('gearForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var payload = readForm();
+    if (!payload) { status('请填写跑鞋名称。'); return; }
+    var submit = $('gearSubmit');
+    submit.disabled = true;
+    var request = editingId
+      ? api('/gear/' + editingId, { method: 'PATCH', body: JSON.stringify(payload) })
+      : api('/gear', { method: 'POST', body: JSON.stringify(payload) });
+    request.then(function () {
+      status(editingId ? '已保存更改。' : '已新增跑鞋。里程将按关联活动重算。');
+      resetForm();
+      return loadGear();
+    }).catch(function (err) { status(err.message); }).then(function () { submit.disabled = false; });
+  });
+  $('gearCancel').addEventListener('click', resetForm);
+  $('linkActivity').addEventListener('change', refreshLinkCurrent);
+  $('linkForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var aid = $('linkActivity').value, gid = $('linkGear').value;
+    if (!aid || !gid) { status('请先选择活动与跑鞋。'); return; }
+    var submit = $('linkSubmit');
+    submit.disabled = true;
+    api('/activities/' + aid + '/gear', { method: 'PUT', body: JSON.stringify({ gear_id: Number(gid) }) })
+      .then(function () { status('已关联；里程按未删除关联活动重算。'); return Promise.all([loadGear(), refreshLinkCurrent()]); })
+      .catch(function (err) { status(err.message); }).then(function () { submit.disabled = false; });
+  });
+  $('linkRemove').addEventListener('click', function () {
+    var aid = $('linkActivity').value;
+    if (!aid) { status('请先选择活动。'); return; }
+    api('/activities/' + aid + '/gear', { method: 'DELETE' })
+      .then(function () { status('已解除关联；里程重算。'); return Promise.all([loadGear(), refreshLinkCurrent()]); })
+      .catch(function (err) { status(err.message); });
+  });
+  $('gearDetailClose').addEventListener('click', function () { $('gearDetailPanel').hidden = true; });
+  window.onAuthReady = function () {
+    Promise.all([loadGear(), loadActivities()]).then(function () { status(''); }).catch(function (e) { status(e.message); });
+  };
+})();
+</script>
+<script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script><script src="/common.js"></script><script src="/icons.js"></script></body></html>

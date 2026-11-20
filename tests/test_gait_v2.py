@@ -47,6 +47,10 @@ def make_frame(i, fps, vis=1.0, jitter=0.0, support_shin=60.0, swing_shin=38.0):
     ra_x, ra_y = ankle(0.54, r_shin, r_signed)
     return {
         'frame_index': i,
+        # 像素几何契约：合成几何按各向同性像素构造，显式声明方形画布
+        # （角度与原先隐含的方形归一化假设一致）。
+        'frame_width': 1000,
+        'frame_height': 1000,
         'landmarks': [
             FakeLM(0.5, 0.4, vis, 'LEFT_HIP'), FakeLM(0.52, 0.4, vis, 'RIGHT_HIP'),
             FakeLM(0.48, 0.6, vis, 'LEFT_KNEE'), FakeLM(0.54, 0.6, vis, 'RIGHT_KNEE'),

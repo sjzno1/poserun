@@ -2,6 +2,10 @@
 // 页面在引入本脚本前设置 window.PAGE = 'home' | 'upload' | 'results' | 'history' | 'camera' | 'users'
 // 本脚本负责：登录/注册遮罩、导航栏、页脚注入，令牌校验，退出登录
 window.PAGE = window.PAGE || 'home';
+if (document.head && document.createElement) {
+    const themeCSS = document.createElement('link'); themeCSS.rel = 'stylesheet'; themeCSS.href = '/themes/theme-system.css'; document.head.append(themeCSS);
+    const themeJS = document.createElement('script'); themeJS.src = '/themes/theme-system.js'; themeJS.async = false; document.head.append(themeJS);
+}
 
 let authToken = localStorage.getItem('poserun_token') || null;
 let authUser = null;
@@ -23,11 +27,20 @@ async function apiFetch(url, options) {
 }
 
 function clearSession() {
+    if (typeof rmForget === 'function') rmForget();
     authToken = null;
     authUser = null;
     localStorage.removeItem('poserun_token');
     localStorage.removeItem('poserun_user');
     localStorage.removeItem('poserun_last_result');
+    // 2FA 登录表单为增强项：DOM 不可用（如契约测试桩无 getElementById）时优雅跳过，
+    // 令牌/本地私密数据清理不受影响。
+    if (typeof document.getElementById === 'function') {
+        const tg = document.getElementById('loginTotpGroup');
+        if (tg) tg.style.display = 'none';
+        const ti = document.getElementById('loginTotp');
+        if (ti) ti.value = '';
+    }
 }
 
 // HTML转义
@@ -40,7 +53,10 @@ function escapeHtml(s) {
 // ===== 页面骨架注入：登录遮罩 + 侧边栏 + 顶栏 + 页脚（Portainer 风格） =====
 function buildShell() {
     const pageTitles = {
-        home: '概览',
+        home: '总览',
+        activities: '活动档案',
+        garmin: '佳明连接',
+        settings: '外观设置',
         upload: '自动主体分析',
         results: '分析结果',
         history: '历史记录',
@@ -50,14 +66,19 @@ function buildShell() {
         logs: '操作日志',
         profile: '跑者画像',
         trend: '趋势追踪',
+        'training-load': '训练负荷',
     };
     const navItems = [
-        ['home', '/', '首页', 'fa-running', '分析'],
-        ['upload', '/upload.html', '上传分析', 'fa-upload', '分析'],
+        ['home', '/', '总览', 'fa-running', '跑步管理'],
+        ['activities', '/activities.html', '活动', 'fa-history', '跑步管理'],
+        ['garmin', '/garmin.html', '佳明连接', 'fa-link', '跑步管理'],
+        ['settings', '/settings.html', '外观设置', 'fa-user-edit', '系统'],
+        ['upload', '/upload.html', '跑姿分析', 'fa-upload', '分析'],
         ['results', '/results.html', '分析结果', 'fa-chart-line', '分析'],
         ['camera', '/camera.html', '摄像头预览', 'fa-video', '分析'],
         ['history', '/history.html', '历史记录', 'fa-history', '数据'],
         ['trend', '/trend.html', '趋势追踪', 'fa-chart-area', '数据'],
+        ['training-load', '/training-load', '训练负荷', 'fa-tachometer-alt', '数据'],
         ['profile', '/profile.html', '跑者画像', 'fa-user-edit', '数据'],
         ['training', '/training.html', '训练联动', 'fa-link', '数据'],
         ['users', '/users.html', '人员管理', 'fa-users-cog', '系统'],
@@ -67,8 +88,8 @@ function buildShell() {
     let sections = [];
     navItems.forEach(function (it) {
         const active = window.PAGE === it[0] ? ' active' : '';
-        const hidden = (it[0] === 'users' || it[0] === 'logs') ? ' style="display: none;"' : '';
-        const liId = it[0] === 'users' ? 'navUsersItem' : (it[0] === 'logs' ? 'navLogsItem' : '');
+        const hidden = (it[0] === 'users' || it[0] === 'logs' || it[0] === 'training-load') ? ' style="display: none;"' : '';
+        const liId = it[0] === 'users' ? 'navUsersItem' : (it[0] === 'logs' ? 'navLogsItem' : (it[0] === 'training-load' ? 'navLoadItem' : ''));
         const li = '<li class="nav-item"' + (liId ? ' id="' + liId + '"' : '') + (hidden ? ' style="display: none;"' : '') + '>' +
             '<a class="nav-link' + active + '" href="' + it[1] + '"><i class="fas ' + it[3] + '"></i>' + it[2] + '</a></li>';
         const last = sections[sections.length - 1];
@@ -79,14 +100,14 @@ function buildShell() {
         return '<div class="sidebar-section">' + s[0] + '</div><ul class="sidebar-nav">' + s[1] + '</ul>';
     }).join('');
 
-    const title = pageTitles[window.PAGE] || 'PoseRun';
+    const title = pageTitles[window.PAGE] || '跑步管理系统';
 
     document.body.insertAdjacentHTML('afterbegin',
         '<div id="authOverlay" class="auth-overlay" style="display: none;">' +
         '  <div class="auth-card">' +
         '    <div class="auth-header">' +
         '      <div class="auth-logo"><i class="fas fa-running"></i></div>' +
-        '      <h4>PoseRun 跑姿分析系统</h4>' +
+        '      <h4>跑步管理系统</h4>' +
         '      <p>登录后开始跑姿分析</p>' +
         '    </div>' +
         '    <div class="auth-body">' +
@@ -100,6 +121,8 @@ function buildShell() {
         '          <input type="text" class="form-control" id="loginUsername" autocomplete="username" maxlength="32"></div>' +
         '          <div class="mb-3"><label class="form-label" for="loginPassword">密码</label>' +
         '          <input type="password" class="form-control" id="loginPassword" autocomplete="current-password"></div>' +
+        '          <div class="mb-3" id="loginTotpGroup" style="display:none;"><label class="form-label" for="loginTotp">两步验证动态码</label>' +
+        '          <input type="text" class="form-control" id="loginTotp" inputmode="numeric" maxlength="6" placeholder="认证器 6 位动态码" autocomplete="one-time-code"></div>' +
         '          <button class="btn btn-primary w-100" id="loginBtn">登 录</button>' +
         '        </div>' +
         '        <div class="tab-pane fade" id="paneRegister">' +
@@ -125,7 +148,7 @@ function buildShell() {
         '<aside class="sidebar" id="appSidebar">' +
         '  <a class="sidebar-brand" href="/">' +
         '    <i class="fas fa-running"></i>' +
-        '    <span>PoseRun<small>跑姿分析系统</small></span>' +
+        '    <span>跑步管理系统<small>poseRun · 跑姿与活动</small></span>' +
         '  </a>' +
         sectionHtml +
         '  <div class="sidebar-footer">v__POSERUN_VERSION__ · YOLO Pose</div>' +
@@ -144,6 +167,7 @@ function buildShell() {
         '        <li><hr class="dropdown-divider"></li>' +
         '        <li><a class="dropdown-item" href="#" id="navEditNameBtn"><i class="fas fa-pen me-2"></i>修改姓名</a></li>' +
         '        <li><a class="dropdown-item" href="#" id="navChangePwdBtn"><i class="fas fa-key me-2"></i>修改密码</a></li>' +
+        '        <li><a class="dropdown-item" href="#" id="nav2faBtn"><i class="fas fa-shield-alt me-2"></i>两步验证</a></li>' +
         '        <li><hr class="dropdown-divider"></li>' +
         '        <li><a class="dropdown-item text-danger" href="#" id="navDeleteAccountBtn"><i class="fas fa-user-slash me-2"></i>注销账号</a></li>' +
         '        <li><hr class="dropdown-divider"></li>' +
@@ -241,10 +265,35 @@ function buildShell() {
         '    </div>' +
         '  </div></div>' +
         '</div>' +
+        '<div class="modal fade" id="twoFaModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">' +
+        '  <div class="modal-header"><h5 class="modal-title"><i class="fas fa-shield-alt me-2"></i>两步验证（2FA）</h5>' +
+        '    <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>' +
+        '  <div class="modal-body">' +
+        '    <p class="small text-muted mb-2">开启后，登录需输入密码 + 认证器动态码。支持 Google Authenticator、Microsoft Authenticator、1Password、Bitwarden 等。</p>' +
+        '    <div class="mb-3">当前状态：<span id="twoFaStatusBadge"></span></div>' +
+        '    <div id="twoFaMsg" class="small mb-2" style="display:none;"></div>' +
+        '    <button class="btn btn-primary btn-sm mb-3" id="twoFaSetupBtn">开启两步验证</button>' +
+        '    <div id="twoFaSetupArea" style="display:none;">' +
+        '      <p class="small mb-2">1. 用认证器扫描下方二维码（或手动输入密钥）：</p>' +
+        '      <div id="twoFaQr" class="text-center mb-2" style="min-height:180px;"></div>' +
+        '      <p class="small mb-1">手动密钥：<code id="twoFaSecret" style="word-break:break-all;"></code></p>' +
+        '      <p class="small mb-2">2. 输入认证器显示的 6 位动态码完成绑定：</p>' +
+        '      <div class="input-group input-group-sm mb-2"><input type="text" class="form-control" id="twoFaEnableCode" inputmode="numeric" maxlength="6" placeholder="6 位动态码" autocomplete="one-time-code">' +
+        '        <button class="btn btn-primary" id="twoFaEnableBtn">确认开启</button></div>' +
+        '    </div>' +
+        '    <div id="twoFaDisableArea" style="display:none;">' +
+        '      <p class="small text-muted mb-2">关闭两步验证需验证当前密码和动态码：</p>' +
+        '      <div class="mb-2"><input type="password" class="form-control form-control-sm" id="twoFaDisablePwd" placeholder="当前密码" autocomplete="current-password"></div>' +
+        '      <div class="input-group input-group-sm mb-2"><input type="text" class="form-control" id="twoFaDisableCode" inputmode="numeric" maxlength="6" placeholder="6 位动态码" autocomplete="one-time-code">' +
+        '        <button class="btn btn-outline-danger" id="twoFaDisableBtn">关闭两步验证</button></div>' +
+        '    </div>' +
+        '  </div>' +
+        '</div></div></div>' +
         '<footer class="footer">' +
         '  <div class="container">' +
-        '    <p class="mb-1"><i class="fas fa-running me-1"></i>PoseRun 跑姿分析系统 v__POSERUN_VERSION__ | 基于 YOLO 的姿态识别技术</p>' +
-        '    <p class="mb-0 small">使用问题请在项目仓库提交 Issue 反馈</p>' +
+        '    <p class="mb-1"><i class="fas fa-running me-1"></i>跑步管理系统 v__POSERUN_VERSION__ | 基于 YOLO 的姿态识别技术</p>' +
+        '    <p class="mb-1 small">测量口径 __POSERUN_MEASUREMENT_REV__ · 无评分，未知保持未知</p>' +
+        '    <p class="mb-0 small">技术支持: github.com/sjzno1/poserun/issues</p>' +
         '  </div>' +
         '</footer>');
 }
@@ -285,6 +334,13 @@ function applyAuthedUI() {
     document.getElementById('navUsersItem').style.display = isAdmin ? '' : 'none';
     const logsItem = document.getElementById('navLogsItem');
     if (logsItem) logsItem.style.display = isAdmin ? '' : 'none';
+    // 训练负荷入口随 LOAD_ENABLED 显隐：用负荷 API 自身探针（200=开，404=关），不依赖其他开关。
+    apiFetch('/api/running/load?days=7', { cache: 'no-store' })
+        .then(function (r) {
+            const li = document.getElementById('navLoadItem');
+            if (li) li.style.display = r.ok ? '' : 'none';
+        })
+        .catch(function () { /* 离线或会话失效时保持隐藏 */ });
     // 页面级钩子：各页面可定义 onAuthReady(user) 做初始化
     if (typeof onAuthReady === 'function') onAuthReady(authUser);
 }
@@ -292,15 +348,27 @@ function applyAuthedUI() {
 async function doLogin() {
     const username = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value;
+    const totpEl = document.getElementById('loginTotp');
+    const totp = totpEl ? totpEl.value.trim() : '';
     if (!username || !password) { showAuthOverlay('请输入用户名和密码'); return; }
     try {
         const resp = await apiFetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: username, password: password })
+            body: JSON.stringify({ username: username, password: password, totp_code: totp })
         });
         const data = await resp.json();
-        if (!resp.ok) { showAuthOverlay(data.error || '登录失败'); return; }
+        if (resp.ok && data.mfa_required) {
+            document.getElementById('loginTotpGroup').style.display = '';
+            showAuthOverlay('该账号已开启两步验证，请输入认证器动态码');
+            if (totpEl) totpEl.focus();
+            return;
+        }
+        if (!resp.ok) {
+            if (data.mfa_required) document.getElementById('loginTotpGroup').style.display = '';
+            showAuthOverlay(data.error || '登录失败');
+            return;
+        }
         authToken = data.token;
         authUser = data.user;
         localStorage.setItem('poserun_token', authToken);
@@ -414,6 +482,115 @@ async function deleteMyAccount() {
     } catch (err) { alert('网络错误，请稍后重试'); }
 }
 
+// ===== 两步验证（TOTP）：账户菜单入口 + 绑定/禁用 =====
+async function open2faModal() {
+    new bootstrap.Modal(document.getElementById('twoFaModal')).show();
+    await render2faStatus();
+}
+
+async function render2faStatus() {
+    const on = !!(authUser && authUser.totp_enabled);
+    document.getElementById('twoFaStatusBadge').innerHTML = on
+        ? '<span class="badge bg-success">已开启</span>'
+        : '<span class="badge bg-secondary">未开启</span>';
+    document.getElementById('twoFaSetupArea').style.display = 'none';
+    document.getElementById('twoFaSetupBtn').style.display = on ? 'none' : '';
+    document.getElementById('twoFaDisableArea').style.display = on ? '' : 'none';
+    document.getElementById('twoFaMsg').style.display = 'none';
+    if (on) {
+        document.getElementById('twoFaDisablePwd').value = '';
+        document.getElementById('twoFaDisableCode').value = '';
+    }
+}
+
+function show2faMsg(text, ok) {
+    const el = document.getElementById('twoFaMsg');
+    el.className = 'small mb-2 ' + (ok ? 'text-success' : 'text-danger');
+    el.textContent = text;
+    el.style.display = '';
+}
+
+async function start2faSetup() {
+    try {
+        const resp = await apiFetch('/api/auth/me/2fa/setup', { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) { show2faMsg(data.error || '获取密钥失败', false); return; }
+        document.getElementById('twoFaSecret').textContent = data.secret;
+        document.getElementById('twoFaEnableCode').value = '';
+        document.getElementById('twoFaSetupArea').style.display = '';
+        document.getElementById('twoFaSetupBtn').style.display = 'none';
+        renderQr(document.getElementById('twoFaQr'), data.otpauth_uri);
+    } catch (err) { show2faMsg('网络错误', false); }
+}
+
+// 二维码渲染：优先本地 vendored qrcode-generator，缺失时回退 CDN；都失败则提示手动输入密钥
+function loadQrLib() {
+    return new Promise(function (resolve, reject) {
+        if (typeof qrcode === 'function') { resolve(); return; }
+        const urls = ['/vendor/qrcode-generator/qrcode.js',
+                      'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js'];
+        let i = 0;
+        (function next() {
+            if (typeof qrcode === 'function') { resolve(); return; }
+            if (i >= urls.length) { reject(new Error('qr lib unavailable')); return; }
+            const s = document.createElement('script');
+            s.src = urls[i++];
+            s.onload = function () { (typeof qrcode === 'function') ? resolve() : next(); };
+            s.onerror = next;
+            document.head.appendChild(s);
+        })();
+    });
+}
+
+function renderQr(el, uri) {
+    el.innerHTML = '<div class="text-muted small p-3">二维码加载中…</div>';
+    loadQrLib().then(function () {
+        const qr = qrcode(0, 'M');
+        qr.addData(uri);
+        qr.make();
+        el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+        const svg = el.querySelector('svg');
+        if (svg) { svg.style.width = '180px'; svg.style.height = '180px'; }
+    }).catch(function () {
+        el.innerHTML = '<div class="text-muted small p-3">二维码加载失败，<br>请手动输入下方密钥</div>';
+    });
+}
+
+async function enable2fa() {
+    const code = document.getElementById('twoFaEnableCode').value.trim();
+    if (!/^\d{6}$/.test(code)) { show2faMsg('请输入 6 位数字动态码', false); return; }
+    try {
+        const resp = await apiFetch('/api/auth/me/2fa/enable', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: code })
+        });
+        const data = await resp.json();
+        if (!resp.ok) { show2faMsg(data.error || '开启失败', false); return; }
+        if (data.user) { authUser = data.user; localStorage.setItem('poserun_user', JSON.stringify(data.user)); }
+        await render2faStatus();
+        show2faMsg('两步验证已开启', true);
+    } catch (err) { show2faMsg('网络错误', false); }
+}
+
+async function disable2fa() {
+    const password = document.getElementById('twoFaDisablePwd').value;
+    const code = document.getElementById('twoFaDisableCode').value.trim();
+    if (!password) { show2faMsg('请输入当前密码', false); return; }
+    if (!/^\d{6}$/.test(code)) { show2faMsg('请输入 6 位数字动态码', false); return; }
+    if (!confirm('确认关闭两步验证？关闭后登录仅需密码，安全性降低。')) return;
+    try {
+        const resp = await apiFetch('/api/auth/me/2fa/disable', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: password, code: code })
+        });
+        const data = await resp.json();
+        if (!resp.ok) { show2faMsg(data.error || '关闭失败', false); return; }
+        if (data.user) { authUser = data.user; localStorage.setItem('poserun_user', JSON.stringify(data.user)); }
+        await render2faStatus();
+        show2faMsg('两步验证已关闭', true);
+    } catch (err) { show2faMsg('网络错误', false); }
+}
+
 // ===== 初始化：注入骨架 + 绑定事件 + 校验本地令牌 =====
 function initApp() {
     buildShell();
@@ -440,6 +617,10 @@ function initApp() {
     bind('editNameSaveBtn', 'click', saveEditName);
     bind('editNameInput', 'keydown', function (e) { if (e.key === 'Enter') saveEditName(); });
     bind('pwdSaveBtn', 'click', saveChangePwd);
+    bind('nav2faBtn', 'click', function (e) { e.preventDefault(); open2faModal(); });
+    bind('twoFaSetupBtn', 'click', start2faSetup);
+    bind('twoFaEnableBtn', 'click', enable2fa);
+    bind('twoFaDisableBtn', 'click', disable2fa);
     if (typeof exportToCsv === 'function') bind('exportCsvBtn', 'click', exportToCsv);
     if (typeof exportToJson === 'function') bind('exportJsonBtn', 'click', exportToJson);
 

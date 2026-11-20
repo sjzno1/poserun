@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>训练日志 · 澄明训练台</title><link rel="stylesheet" href="/vendor/bootstrap-5.3.0/bootstrap.min.css"><link rel="stylesheet" href="/common.css">
+<style>
+/* 页面级补充：共享令牌与三主题来自 /common.css 与 /themes/theme-system.css（本地，无 CDN）。 */
+#journalForm p,#journalFilter p{margin:0 0 14px}
+#journalForm label,#journalFilter label{display:block;font-weight:600;margin-bottom:4px}
+#journalForm input,#journalForm textarea,#journalFilter input{width:100%;max-width:420px;padding:10px;background:var(--panel,#fff);color:var(--ink,inherit);border:1px solid var(--line,#dce4ec);border-radius:8px}
+#journalForm textarea{max-width:720px}
+#journalForm input:focus,#journalForm textarea:focus,#journalFilter input:focus{outline:3px solid var(--accent,#165cc6);outline-offset:1px}
+#journalForm button,#journalFilter button{min-height:44px;margin:8px 8px 8px 0;padding:8px 18px;border-radius:8px;border:1px solid var(--accent,#165cc6);background:var(--soft,#e9f1ff);color:var(--accent,#165cc6);font-weight:600;cursor:pointer}
+#journalForm button:disabled{opacity:.55;cursor:wait}
+#journalForm button[type=submit]{background:var(--accent,#165cc6);color:#fff}
+.rm-evidence-tag{display:inline-block;padding:2px 10px;border:1px solid var(--line,#dce4ec);border-radius:999px;background:var(--soft,#e9f1ff);color:var(--ink,inherit);font-size:13px}
+.rm-private-tag{border-color:#b48a00;color:#8a6a00}
+#journalList li{display:grid;gap:6px}
+#journalList .rm-actions button,#revisionPanel button{min-height:40px;margin:0 8px 0 0;padding:6px 14px;border-radius:8px;border:1px solid var(--line,#dce4ec);background:var(--panel,#fff);color:var(--ink,inherit);cursor:pointer}
+#journalList .rm-actions button.rm-danger{border-color:#e74c3c;color:#e74c3c}
+#journalList .rm-body{white-space:pre-wrap;overflow-wrap:break-word}
+#journalList li>p:first-child,#revisionList li{font-variant-numeric:tabular-nums}
+#revisionPanel ol{padding-left:24px}
+#exportPanel p{margin:0 0 14px}
+#exportPanel label{display:block;font-weight:600;margin-bottom:4px}
+#exportPanel select{width:100%;max-width:420px;padding:10px;background:var(--panel,#fff);color:var(--ink,inherit);border:1px solid var(--line,#dce4ec);border-radius:8px}
+#exportPanel select:focus{outline:3px solid var(--accent,#165cc6);outline-offset:1px}
+#exportPanel button{min-height:44px;margin:8px 8px 8px 0;padding:8px 18px;border-radius:8px;border:1px solid var(--accent,#165cc6);background:var(--soft,#e9f1ff);color:var(--accent,#165cc6);font-weight:600;cursor:pointer}
+#exportPanel button:disabled{opacity:.55;cursor:wait}
+:focus-visible{outline:3px solid var(--accent,#165cc6);outline-offset:3px}
+@media(max-width:700px){#journalForm input,#journalForm textarea,#journalFilter input,#exportPanel select{max-width:100%}}
+</style></head>
+<body><script>window.PAGE='journal';</script><main class="rm-main">
+<p>澄明训练台 ／ 训练档案</p><h1>训练日志</h1>
+<p>按日期记录训练体会，每天一条；每次更正保留版本（revision）。私密备注仅本人可见，不进入任何列表、分享或导出路径。</p>
+<p role="status" id="journalStatus" aria-live="polite"></p>
+<section class="rm-panel" id="exportPanel" hidden>
+<h2>导出我的活动数据</h2>
+<p class="rm-evidence">仅导出本人未删除活动（按开始时间排序）；CSV 带 UTF-8 BOM，Excel 可直接打开；缺测留空。不含训练日志私密备注。</p>
+<p><label for="exportYear">年份</label><select id="exportYear"></select></p>
+<p><button type="button" id="exportCsvBtn">导出 CSV</button><button type="button" id="exportJsonBtn">导出 JSON</button></p>
+<p role="status" id="exportStatus" aria-live="polite"></p>
+</section>
+<section class="rm-panel">
+<h2 id="journalFormTitle">写一条日志</h2>
+<form id="journalForm">
+<p><label for="journalDate">日期</label><input type="date" id="journalDate" required></p>
+<p><label for="journalBody">训练记录</label><textarea id="journalBody" rows="6" required maxlength="20000" placeholder="今天的训练感受、节奏、恢复情况……最多 20000 字"></textarea></p>
+<p><label for="journalPrivate">私密备注（仅本人可见）</label><textarea id="journalPrivate" rows="2" maxlength="2000" placeholder="选填；不会出现在列表、分享或导出中"></textarea></p>
+<button type="submit" id="journalSubmit">保存</button><button type="button" id="journalCancel" hidden>取消</button>
+</form>
+</section>
+<section class="rm-panel">
+<h2>我的日志</h2>
+<p class="rm-evidence">证据标签：<span class="rm-evidence-tag">跑者自填 · 未核验</span> · 列表不含私密备注</p>
+<form id="journalFilter">
+<p><label for="filterFrom">起始日期</label><input type="date" id="filterFrom"></p>
+<p><label for="filterTo">结束日期</label><input type="date" id="filterTo"></p>
+<button type="submit" id="filterSubmit">筛选</button><button type="button" id="filterReset">清除筛选</button>
+</form>
+<ul id="journalList" class="rm-list"></ul>
+<p id="journalEmpty" class="rm-evidence" hidden>暂无日志。写下第一条训练体会。</p>
+</section>
+<section class="rm-panel" id="revisionPanel" hidden>
+<h2 id="revisionTitle">更正历史</h2>
+<p class="rm-evidence">每次保存更改都保留更正前内容（含私密备注的旧版本同样仅本人可见）。</p>
+<ol id="revisionList"></ol>
+<p><button type="button" id="revisionClose">关闭</button></p>
+</section>
+<a href="/activities.html" id="journalTrackNav" hidden>活动轨迹</a> · <a href="/gear">跑鞋装备</a> · <a href="/weekly-report">查看周报</a> · <a href="/manual-entry">手工补录</a> · <a href="/">返回总览</a>
+</main>
+<script>
+(function () {
+  'use strict';
+  // 纯函数（node --test 复用，无 DOM 依赖）
+  function fmtEntryDate(iso) { return iso ? String(iso).slice(0, 10) : '未填'; }
+  function revisionLabel(revision) { return '第 ' + (Number(revision) + 1) + ' 版'; }
+  function privacyLabel(hasPrivate) { return hasPrivate ? '含私密备注（仅本人可见）' : '无私密备注'; }
+  // P2 切片6 导出纯函数（node --test 复用，无 DOM 依赖）
+  function exFilename(format, year) {
+    var suffix = (year === '' || year == null) ? 'all' : String(year);
+    return 'poserun-activities-' + suffix + '.' + (format === 'json' ? 'json' : 'csv');
+  }
+  function exYearOptions(currentYear) {
+    var opts = [{ value: '', label: '全部' }];
+    for (var y = currentYear; y >= 2000; y--) opts.push({ value: String(y), label: String(y) });
+    return opts;
+  }
+  function exParseFilename(disposition, fallback) {
+    var m = /filename="?([^";]+)"?/i.exec(disposition || '');
+    return m ? m[1] : fallback;
+  }
+  function exDownloadBlob(blob, filename, doc, urlApi) {
+    doc = doc || document; urlApi = urlApi || URL;
+    var a = doc.createElement('a');
+    var href = urlApi.createObjectURL(blob);
+    a.href = href; a.download = filename;
+    doc.body.appendChild(a);
+    a.click();
+    doc.body.removeChild(a);
+    urlApi.revokeObjectURL(href);
+  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = { fmtEntryDate: fmtEntryDate, revisionLabel: revisionLabel, privacyLabel: privacyLabel, exFilename: exFilename, exYearOptions: exYearOptions, exParseFilename: exParseFilename, exDownloadBlob: exDownloadBlob };
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  var $ = function (id) { return document.getElementById(id); };
+  if (!$('journalForm')) return;
+  var EVIDENCE = '跑者自填 · 未核验';
+  var editingId = null;
+  function status(text) { var el = $('journalStatus'); if (el) el.textContent = text || ''; }
+  function api(path, options) {
+    options = options || {};
+    var headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+    var token = localStorage.getItem('poserun_token');
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    options.headers = headers;
+    return fetch('/api/running' + path, options).then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (data) {
+        if (resp.status === 401) { location.href = '/'; throw new Error('请先登录'); }
+        if (!resp.ok) throw new Error(data.error || '请求失败');
+        return data;
+      });
+    });
+  }
+  function button(label, fn, danger) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    if (danger) b.className = 'rm-danger';
+    b.addEventListener('click', fn);
+    return b;
+  }
+  function renderList(rows) {
+    var list = $('journalList');
+    list.replaceChildren();
+    $('journalEmpty').hidden = rows.length > 0;
+    rows.forEach(function (j) {
+      var li = document.createElement('li');
+      var head = document.createElement('p');
+      head.textContent = fmtEntryDate(j.entry_date) + ' · ' + revisionLabel(j.revision);
+      var tag = document.createElement('span');
+      tag.className = 'rm-evidence-tag';
+      tag.textContent = EVIDENCE;
+      var priv = document.createElement('span');
+      priv.className = 'rm-evidence-tag' + (j.has_private_notes ? ' rm-private-tag' : '');
+      priv.textContent = privacyLabel(j.has_private_notes);
+      head.append(document.createTextNode(' '), tag, document.createTextNode(' '), priv);
+      var body = document.createElement('p');
+      body.className = 'rm-body';
+      body.textContent = j.body;
+      var actions = document.createElement('p');
+      actions.className = 'rm-actions';
+      actions.append(
+        button('编辑', function () { startEdit(j.id); }),
+        button('更正历史', function () { showRevisions(j.id); }),
+        button('删除', function () { deleteEntry(j.id); }, true));
+      li.append(head, body, actions);
+      list.append(li);
+    });
+  }
+  function loadList() {
+    var query = '';
+    var from = $('filterFrom').value, to = $('filterTo').value;
+    if (from) query += (query ? '&' : '?') + 'from=' + encodeURIComponent(from);
+    if (to) query += (query ? '&' : '?') + 'to=' + encodeURIComponent(to);
+    return api('/journal' + query).then(function (data) { renderList(data.journal); });
+  }
+  function startEdit(jid) {
+    return api('/journal/' + jid).then(function (data) {
+      var j = data.journal;
+      editingId = jid;
+      $('journalDate').value = j.entry_date;
+      $('journalBody').value = j.body;
+      $('journalPrivate').value = j.private_notes || '';
+      $('journalFormTitle').textContent = '编辑日志 #' + jid + '（' + fmtEntryDate(j.entry_date) + '）';
+      $('journalSubmit').textContent = '保存更改（保留旧版本）';
+      $('journalCancel').hidden = false;
+      $('journalDate').focus();
+      $('journalForm').scrollIntoView();
+    }).catch(function (e) { status(e.message); });
+  }
+  function resetForm() {
+    editingId = null;
+    $('journalForm').reset();
+    $('journalFormTitle').textContent = '写一条日志';
+    $('journalSubmit').textContent = '保存';
+    $('journalCancel').hidden = true;
+  }
+  function deleteEntry(jid) {
+    if (!confirm('删除这条日志？软删除：更正历史仍保留，可审计。')) return;
+    return api('/journal/' + jid, { method: 'DELETE' })
+      .then(function () { status('已删除。'); return loadList(); })
+      .catch(function (e) { status(e.message); });
+  }
+  function showRevisions(jid) {
+    return api('/journal/' + jid + '/revisions').then(function (data) {
+      $('revisionTitle').textContent = '日志 #' + jid + ' 的更正历史';
+      var ol = $('revisionList');
+      ol.replaceChildren();
+      if (!data.revisions.length) {
+        var li = document.createElement('li');
+        li.textContent = '尚无更正；首次保存即第 1 版。';
+        ol.append(li);
+      }
+      data.revisions.forEach(function (r) {
+        var prior = {};
+        try { prior = JSON.parse(r.prior_json); } catch (e) { prior = {}; }
+        var li = document.createElement('li');
+        li.textContent = '更正于 ' + String(r.changed_at).slice(0, 16).replace('T', ' ') + '（UTC） · 更正前：' +
+          fmtEntryDate(prior.entry_date) + ' · ' + revisionLabel(prior.revision || 0) + ' · ' + (prior.body || '');
+        ol.append(li);
+      });
+      $('revisionPanel').hidden = false;
+      $('revisionPanel').scrollIntoView();
+    }).catch(function (e) { status(e.message); });
+  }
+  $('journalForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var date = $('journalDate').value;
+    var body = $('journalBody').value.trim();
+    if (!date || !body) { status('请填写日期与训练记录。'); return; }
+    var payload = { entry_date: date, body: body };
+    var priv = $('journalPrivate').value.trim();
+    if (priv) payload.private_notes = priv;
+    var submit = $('journalSubmit');
+    submit.disabled = true;
+    var request = editingId
+      ? api('/journal/' + editingId, { method: 'PATCH', body: JSON.stringify(payload) })
+      : api('/journal', { method: 'POST', body: JSON.stringify(payload) });
+    request.then(function () {
+      status(editingId ? '已保存更改，旧版本已保留。' : '已保存日志。');
+      resetForm();
+      return loadList();
+    }).catch(function (err) { status(err.message); }).then(function () { submit.disabled = false; });
+  });
+  $('journalCancel').addEventListener('click', resetForm);
+  $('journalFilter').addEventListener('submit', function (e) {
+    e.preventDefault();
+    loadList().catch(function (err) { status(err.message); });
+  });
+  $('filterReset').addEventListener('click', function () {
+    $('filterFrom').value = ''; $('filterTo').value = '';
+    loadList().catch(function (err) { status(err.message); });
+  });
+  $('revisionClose').addEventListener('click', function () { $('revisionPanel').hidden = true; });
+  // P2 切片6：导出入口（EXPORT_ENABLED 旗标驱动面板显隐；blob 下载，仅本人数据）
+  function exportStatus(text) { var el = $('exportStatus'); if (el) el.textContent = text || ''; }
+  function initExportYears() {
+    var sel = $('exportYear');
+    if (!sel || sel.options.length) return;
+    exYearOptions(new Date().getFullYear()).forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o.value; opt.textContent = o.label;
+      sel.append(opt);
+    });
+  }
+  function doExport(format) {
+    var year = $('exportYear').value;
+    var csvBtn = $('exportCsvBtn'), jsonBtn = $('exportJsonBtn');
+    csvBtn.disabled = true; jsonBtn.disabled = true;
+    exportStatus('正在导出…');
+    apiFetch('/api/running/export?format=' + encodeURIComponent(format) + (year ? '&year=' + encodeURIComponent(year) : ''), { cache: 'no-store' })
+      .then(function (resp) {
+        if (!resp.ok) {
+          return resp.json().catch(function () { return {}; }).then(function (d) {
+            throw new Error(d.error || '导出失败（' + resp.status + '）');
+          });
+        }
+        var filename = exParseFilename(resp.headers.get('Content-Disposition'), exFilename(format, year));
+        return resp.blob().then(function (blob) {
+          exDownloadBlob(blob, filename);
+          exportStatus('已导出 ' + filename + '（仅本人未删除活动）。');
+        });
+      })
+      .catch(function (e) { exportStatus(e.message || '导出失败，请稍后重试。'); })
+      .then(function () { csvBtn.disabled = false; jsonBtn.disabled = false; });
+  }
+  $('exportCsvBtn').addEventListener('click', function () { doExport('csv'); });
+  $('exportJsonBtn').addEventListener('click', function () { doExport('json'); });
+  window.onAuthReady = function () {
+    loadList().then(function () { status(''); }).catch(function (e) { status(e.message); });
+    // 轨迹入口随 TRACK_MAP_ENABLED 显隐（additive：开关关时不出现）。
+    apiFetch('/api/running/dashboard?timezone=' + encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d) {
+          var n = $('journalTrackNav'); if (n) n.hidden = !d.track_map_enabled;
+          var panel = $('exportPanel');
+          if (panel) { panel.hidden = !d.export_enabled; if (d.export_enabled) initExportYears(); }
+        }
+      })
+      .catch(function () {});
+  };
+})();
+</script>
+<script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script><script src="/common.js"></script><script src="/icons.js"></script></body></html>

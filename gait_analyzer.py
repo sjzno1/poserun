@@ -54,7 +54,13 @@ class GaitAnalyzer:
         return {lm.name: lm for lm in (landmarks or [])}
 
     def _frame_features(self, result):
-        """从单帧结果提取步态所需特征；缺关键点/低可见度返回 None 或置空角度"""
+        """从单帧结果提取步态所需特征（浮点像素几何，画幅/缩放不变）。
+
+        小腿角 = 与地面夹角（竖直=90°）；带符号角踝在前为正。
+        几何统一使用浮点像素 (x*W, y*H)：归一化 x/W、y/H 直接做欧氏
+        运算会随画幅纵横比失真。缺少合法画布尺寸时几何输出 None（未知），
+        不退回独立归一化坐标。visibility=0 就是 0（遮挡），不得 `or 1.0`。
+        """
         pts = self._points(result.get('landmarks'))
         need = ['LEFT_HIP', 'RIGHT_HIP', 'LEFT_KNEE', 'RIGHT_KNEE',
                 'LEFT_ANKLE', 'RIGHT_ANKLE']
@@ -75,35 +81,49 @@ class GaitAnalyzer:
                 'r_shin_s': float(r_signed) if r_signed is not None else None,
                 'hip_y': None, 'l_ax': None, 'r_ax': None, 'leg_len': None,
             }
-        # 可见度过滤：任一关键点被遮挡/不可信 → 角度置 None（不跨缺口平滑）
-        low_vis = any(
-            float(getattr(pts[n], 'visibility', 1.0) or 1.0) < MIN_VISIBILITY
-            for n in need
+        # 可见度过滤：任一关键点被遮挡/不可信（含 visibility=0/None）→ 角度置 None
+        def _vis(p):
+            v = getattr(p, 'visibility', 1.0)
+            return float(v) if v is not None else 0.0
+        low_vis = any(_vis(pts[n]) < MIN_VISIBILITY for n in need)
+
+        w = result.get('frame_width')
+        h = result.get('frame_height')
+        dims_ok = (
+            isinstance(w, (int, float)) and not isinstance(w, bool)
+            and math.isfinite(w) and w > 0
+            and isinstance(h, (int, float)) and not isinstance(h, bool)
+            and math.isfinite(h) and h > 0
         )
-        # 腿长（髋-踝，归一化坐标距离）；加合理性边界，异常值视为不可用
+
+        # 腿长（髋-踝，浮点像素距离）；按画布高度归一后做合理性边界
         def seg(a, b):
-            return math.hypot(pts[a].x - pts[b].x, pts[a].y - pts[b].y)
-        leg_l = seg('LEFT_HIP', 'LEFT_ANKLE')
-        leg_r = seg('RIGHT_HIP', 'RIGHT_ANKLE')
-        leg_len = (leg_l + leg_r) / 2 if (leg_l + leg_r) > 0 else None
-        if leg_len is not None and not (0.05 < leg_len < 1.0):
-            leg_len = None
-        # 小腿角度（与地面夹角，竖直=90）
+            return math.hypot((pts[a].x - pts[b].x) * w,
+                              (pts[a].y - pts[b].y) * h)
+        leg_len = None
+        if dims_ok:
+            leg_l = seg('LEFT_HIP', 'LEFT_ANKLE')
+            leg_r = seg('RIGHT_HIP', 'RIGHT_ANKLE')
+            leg_len = (leg_l + leg_r) / 2 if (leg_l + leg_r) > 0 else None
+            if leg_len is not None and not (0.05 < leg_len / h < 1.0):
+                leg_len = None
+
+        # 小腿角度（与地面夹角，竖直=90°）
         def shin(knee, ankle):
-            dx = pts[ankle].x - pts[knee].x
-            dy = pts[ankle].y - pts[knee].y
+            dx = (pts[ankle].x - pts[knee].x) * w
+            dy = (pts[ankle].y - pts[knee].y) * h
             if dx == 0 and dy == 0:
-                return 0.0
+                return None
             return math.degrees(math.atan2(abs(dy), abs(dx)))
         # 带符号小腿角（踝在前为正 / 在后为负）
         def shin_signed(knee, ankle):
-            dx = pts[ankle].x - pts[knee].x
-            dy = pts[ankle].y - pts[knee].y
+            dx = (pts[ankle].x - pts[knee].x) * w
+            dy = (pts[ankle].y - pts[knee].y) * h
             if dx == 0 and dy == 0:
-                return 0.0
+                return None
             mag = math.degrees(math.atan2(abs(dy), abs(dx)))
             return mag if dx < 0 else -mag
-        if low_vis:
+        if low_vis or not dims_ok:
             l_shin = r_shin = None
             l_s = r_s = None
         else:
@@ -111,15 +131,16 @@ class GaitAnalyzer:
             r_shin = shin('RIGHT_KNEE', 'RIGHT_ANKLE')
             l_s = shin_signed('LEFT_KNEE', 'LEFT_ANKLE')
             r_s = shin_signed('RIGHT_KNEE', 'RIGHT_ANKLE')
-        hip_y = (pts['LEFT_HIP'].y + pts['RIGHT_HIP'].y) / 2
         return {
             't': t,
             'l_shin': l_shin, 'r_shin': r_shin,
             'l_shin_s': l_s, 'r_shin_s': r_s,
-            'hip_y': hip_y,
-            'l_ax': pts['LEFT_ANKLE'].x, 'r_ax': pts['RIGHT_ANKLE'].x,
+            'hip_y': (pts['LEFT_HIP'].y + pts['RIGHT_HIP'].y) / 2 * h if dims_ok else None,
+            'l_ax': pts['LEFT_ANKLE'].x * w if dims_ok else None,
+            'r_ax': pts['RIGHT_ANKLE'].x * w if dims_ok else None,
             'leg_len': leg_len,
         }
+
 
     # ---------- 主入口 ----------
 
@@ -257,15 +278,22 @@ class GaitAnalyzer:
     # ---------- 子过程 ----------
 
     def _detect_events(self, shin_series, t_series):
-        """对一条腿的小腿角度序列做状态机检测（None=遮挡帧，跳过不判状态）。
+        """对一条腿的小腿角度序列做状态机检测（None=遮挡/时间缺口帧：重置状态，不跨缺口延续）。
         返回 (strikes:[落地时刻], stance_durations:[每次支撑时长])"""
         strikes = []
         stances = []
         state = None
         plant_start = None
+        prev_t = None
         for shin, t in zip(shin_series, t_series):
-            if shin is None:
+            # 遮挡/缺帧/时间缺口：重置状态，不跨缺口延续支撑相。
+            if shin is None or (prev_t is not None
+                                and t - prev_t > 1.0 / self.fps + 1e-9):
+                state = None
+                plant_start = None
+                prev_t = t
                 continue
+            prev_t = t
             if state is None:
                 if shin > PLANT_HIGH:
                     state = 'planted'

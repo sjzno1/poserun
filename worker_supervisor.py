@@ -1,7 +1,7 @@
 """Fresh exec worker, killable native calls; parent owns locks and publication.
 No fork of a threaded Flask interpreter. Worker receives only a private job path.
 """
-import json, os, signal, sqlite3, subprocess, sys, tempfile, time, shutil, uuid
+import json, os, signal, sqlite3, subprocess, sys, tempfile, time, shutil, uuid, errno
 from pathlib import Path
 from contextlib import contextmanager
 from compute_budget import BudgetExceeded, LIMITS
@@ -59,7 +59,7 @@ def execute_request(fn):
               'body':request.get_json(silent=True),'user':getattr(g,'current_user',None),'prior':prior,
               'prior_audit':prior_audit}
         (job/'job.json').write_text(json.dumps(spec))
-        env={k:v for k,v in os.environ.items() if k in ('PATH','HOME','TMPDIR','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','YOLO_CONFIG_DIR')}
+        env={k:v for k,v in os.environ.items() if k in ('PATH','HOME','TMPDIR','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','YOLO_CONFIG_DIR') or k.startswith('POSERUN_REMOTE_DETECT_')}
         env.update(PYTHONPATH=str(Path(__file__).resolve().parent),PYTHONDONTWRITEBYTECODE='1',
                    AUTH_DB_PATH=str(job/'data'/'auth.db'),POSERUN_REPORTS_DIR=str(job/'reports'),
                    POSERUN_ANALYSIS_WORKER='1')
@@ -73,6 +73,29 @@ def execute_request(fn):
             return {'error':'批量任一视频失败，整批不发布','errors':result['batch_failed'],'successful':0,'results':[]},422
         publish(job,root,prior,prior_audit)
         return current_app.response_class((job/'response.body').read_bytes(),status=result['status'],headers=result['headers'])
+
+def _atomic_publish(item,dest):
+    # os.rename is atomic only within a single mount. Production binds data/reports/
+    # uploads as separate mounts (distinct mount IDs even on one filesystem, st_dev
+    # equal), so a cross-mount rename raises EXDEV. On EXDEV, stage inside the
+    # destination mount under a hidden name, then rename atomically there: the final
+    # name never exposes a partial artifact and rollback semantics are unchanged.
+    try:
+        os.rename(item,dest);return
+    except OSError as exc:
+        if exc.errno!=errno.EXDEV:raise
+    staging=dest.parent/('.publish-'+uuid.uuid4().hex)
+    staging.mkdir(mode=0o700)
+    tmp=staging/item.name
+    try:
+        if item.is_dir():shutil.copytree(item,tmp)
+        else:shutil.copy2(item,tmp)
+        os.rename(tmp,dest)
+    finally:
+        if tmp.exists():
+            if tmp.is_dir():shutil.rmtree(tmp)
+            else:tmp.unlink(missing_ok=True)
+        staging.rmdir()
 
 def publish(job,root,prior,prior_audit=0):
     """Artifacts first, one SQLite commit last. Authorization sees no half batch.
@@ -99,7 +122,7 @@ def publish(job,root,prior,prior_audit=0):
                 dest=target/item.name
                 if item.is_symlink() or dest.exists():raise RuntimeError('发布资源冲突')
                 # Parent is sole analysis writer and names carry a random job prefix.
-                os.rename(item,dest);moved.append(dest)
+                _atomic_publish(item,dest);moved.append(dest)
         db.execute('INSERT INTO history_records (id,'+names+') SELECT id,'+names+' FROM staged.history_records WHERE id>?',(prior,))
         db.commit()
     except BaseException:

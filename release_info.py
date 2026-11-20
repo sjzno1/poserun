@@ -1,5 +1,5 @@
 """Single application capability/version source, not a science validation claim."""
-VERSION = '2.8.0'
+VERSION = '2.9.0'
 CAPABILITIES = {
     'measurement_revision': 'unscored-2d-v1',
     'subject_selection_mode': 'automatic_primary_runner',

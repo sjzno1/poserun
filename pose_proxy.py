@@ -2,7 +2,7 @@
 """pose_proxy.py - 宿主侧 TCP 代理：*:6000 -> poseRun 容器:8080
 当 container CLI 的 -p 端口转发失效时使用。自动从 container list 获取最新容器 IP，
 带缓存：container 命令暂时不可用时回退到上次已知 IP。
-由 LaunchAgent com.poserun.pose-proxy 托管（KeepAlive 自动拉起）。
+由 LaunchAgent com.sjz.pose-proxy 托管（KeepAlive 自动拉起）。
 """
 import json
 import os

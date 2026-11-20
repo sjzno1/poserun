@@ -63,8 +63,10 @@ print(json.dumps(a))
             self.assertEqual(result.returncode, 0, result.stderr)
             outputs.append(json.loads(result.stdout.strip().splitlines()[-1]))
         self.assertEqual(outputs[0], outputs[1])
-        self.assertEqual(outputs[0], [3, ['test_knee_angle_does_not_depend_on_canvas_aspect',
-                                         'test_gait_shin_uses_pixel_geometry'], []])
+        # fix-contracts 2026-11-13: 基线像素几何与确定性平滑已根因修复，
+        # 三个基线测试应全部通过。下方断言仍校验「候选导入前后、两种导入
+        # 顺序结果完全一致」与基线类身份不变（防污染不变量未削弱）。
+        self.assertEqual(outputs[0], [3, [], []])
 
     def test_visibility_and_coordinate_missingness_per_metric(self):
         cases = [('visibility', v) for v in (0, None, float('nan'), float('inf'), .49)]

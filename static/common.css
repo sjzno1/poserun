@@ -795,3 +795,17 @@ body > .container-fluid { max-width: 1600px; padding: 0 28px; }
         transition-duration: 0.01ms !important;
     }
 }
+
+/* ===== 移动端加固（ui-hardening 2026-11-13）===== */
+/* 表格/图表在小屏局部横向滚动，而不是撑破页面 */
+.table-responsive { -webkit-overflow-scrolling: touch; max-width: 100%; }
+.chart-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+@media (max-width: 575.98px) {
+    /* 触控目标 >= 44px（上传/操作按钮） */
+    .btn { min-height: 44px; }
+    /* 16px 输入字号防止 iOS 聚焦自动放大 */
+    .form-control, .form-select { min-height: 44px; font-size: 16px; }
+    .table { font-size: 0.8rem; }
+    .card-body { padding: 0.9rem; }
+    h2 { font-size: 1.3rem; }
+}

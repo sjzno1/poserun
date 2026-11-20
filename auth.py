@@ -14,12 +14,15 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import sqlite3
+import struct
 import threading
 import time
 from datetime import datetime
+from urllib.parse import quote
 
 from flask import Blueprint, g, jsonify, request
 
@@ -30,9 +33,62 @@ PBKDF2_ITERATIONS = 200_000
 DEFAULT_ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
 DEFAULT_ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
 
+# 启动警告（ui-hardening 2026-11-13）：默认口令回退生效时提示，不改播种行为、不打印口令值。
+if 'ADMIN_PASSWORD' not in os.environ:
+    logging.getLogger('poserun.auth').warning(
+        'ADMIN_PASSWORD 环境变量未设置：首次初始化将使用内置默认管理员口令回退。'
+        '请部署后立即修改管理员密码，或通过 ADMIN_PASSWORD 环境变量注入强口令。')
+
 
 def _now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+# ---------------------------------------------------------------------------
+# TOTP 两步验证（RFC 6238，标准库实现，零第三方依赖，兼容主流认证器 App）
+# ---------------------------------------------------------------------------
+TOTP_PERIOD = 30      # 时间步长（秒），主流认证器默认 30s
+TOTP_DIGITS = 6       # 动态码位数
+TOTP_WINDOW = 1       # 允许前后各 1 个时间步，容忍时钟漂移
+TOTP_ISSUER = 'PoseRun'
+
+
+def _totp_generate_secret() -> str:
+    """生成 160-bit 随机密钥，Base32 编码（32 字符，认证器标准）"""
+    return base64.b32encode(secrets.token_bytes(20)).decode('ascii').rstrip('=')
+
+
+def _totp_at(secret_b32: str, counter: int) -> str:
+    """按 RFC 4226 计算指定计数器的 HOTP 码（SHA1，动态截断）"""
+    pad = '=' * ((8 - len(secret_b32) % 8) % 8)
+    key = base64.b32decode(secret_b32.upper() + pad)
+    digest = hmac.new(key, struct.pack('>Q', counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code = (struct.unpack('>I', digest[offset:offset + 4])[0] & 0x7FFFFFFF) % (10 ** TOTP_DIGITS)
+    return str(code).zfill(TOTP_DIGITS)
+
+
+def _totp_match(secret_b32: str, code: str, window: int = TOTP_WINDOW):
+    """校验动态码，返回命中的时间步计数器；不匹配返回 None。常数时间比较。"""
+    if not secret_b32 or not code:
+        return None
+    code = str(code).strip()
+    if len(code) != TOTP_DIGITS or not code.isdigit():
+        return None
+    current = int(time.time()) // TOTP_PERIOD
+    for offset in range(-window, window + 1):
+        counter = current + offset
+        if hmac.compare_digest(_totp_at(secret_b32, counter), code):
+            return counter
+    return None
+
+
+def _totp_provisioning_uri(secret_b32: str, username: str) -> str:
+    """otpauth:// 链接，供认证器扫码或手动导入"""
+    label = quote(f'{TOTP_ISSUER}:{username}', safe='')
+    return (f'otpauth://totp/{label}?secret={secret_b32}'
+            f'&issuer={quote(TOTP_ISSUER)}&algorithm=SHA1'
+            f'&digits={TOTP_DIGITS}&period={TOTP_PERIOD}')
 
 
 class AuthManager:
@@ -106,6 +162,15 @@ class AuthManager:
             columns = {r[1] for r in conn.execute('PRAGMA table_info(users)')}
             if 'session_version' not in columns:
                 conn.execute('ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0')
+            # TOTP 两步验证字段（totp_secret 仅启用后写入；totp_pending 为绑定中的临时密钥）
+            if 'totp_secret' not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT DEFAULT ''")
+            if 'totp_enabled' not in columns:
+                conn.execute('ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0')
+            if 'totp_pending' not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN totp_pending TEXT DEFAULT ''")
+            if 'totp_last_step' not in columns:
+                conn.execute('ALTER TABLE users ADD COLUMN totp_last_step INTEGER DEFAULT 0')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)')
 
     def _seed_admin(self):
@@ -233,7 +298,7 @@ class AuthManager:
         return user, None
 
     def list_users(self, search=''):
-        sql = 'SELECT id, username, name, role, active, created_at, last_login_at FROM users'
+        sql = 'SELECT id, username, name, role, active, created_at, last_login_at, totp_enabled FROM users'
         args = []
         if search:
             sql += ' WHERE username LIKE ? OR name LIKE ?'
@@ -332,6 +397,7 @@ class AuthManager:
             'active': bool(user['active']),
             'created_at': user['created_at'],
             'last_login_at': user.get('last_login_at'),
+            'totp_enabled': bool(user.get('totp_enabled', 0)),
         }
 
     # ---------- Flask 集成 ----------
@@ -390,6 +456,18 @@ class AuthManager:
                 self._audit('login_failed', user=None,
                             target=str(data.get('username') or ''), detail=err)
                 return jsonify({'error': err}), 401
+            # 两步验证：仅在口令正确后才检查，避免泄露账号是否开启 2FA
+            if user.get('totp_enabled'):
+                code = (data.get('totp_code') or '').strip()
+                if not code:
+                    return jsonify({'mfa_required': True}), 200
+                matched = _totp_match(user.get('totp_secret'), code)
+                if matched is None or matched <= (user.get('totp_last_step') or 0):
+                    self._audit('login_mfa_failed', user=None,
+                                target=str(data.get('username') or ''), detail='动态码错误或已使用')
+                    return jsonify({'error': '动态码错误或已失效', 'mfa_required': True}), 401
+                with self._lock, self._conn() as conn:
+                    conn.execute('UPDATE users SET totp_last_step=? WHERE id=?', (matched, user['id']))
             token = self.create_token(user)
             self._audit('login', user=user, target=user['username'],
                         detail=f'登录成功（{user.get("role")}）')
@@ -493,6 +571,81 @@ class AuthManager:
             self._audit('user_delete', user=g.current_user, target=str(uid),
                         detail='管理员删除用户')
             return jsonify({'success': True, 'message': '用户已删除'})
+
+        # ---------- 两步验证（TOTP）：本人状态/绑定/启用/禁用 ----------
+
+        @bp.route('/api/auth/me/2fa', methods=['GET'])
+        def me_2fa_status():
+            user = self.get_user_by_id(g.current_user['id'])
+            return jsonify({'success': True, 'enabled': bool(user and user.get('totp_enabled'))})
+
+        @bp.route('/api/auth/me/2fa/setup', methods=['POST'])
+        def me_2fa_setup():
+            uid = g.current_user['id']
+            user = self.get_user_by_id(uid)
+            if user.get('totp_enabled'):
+                return jsonify({'error': '已开启两步验证，请先禁用后再重新绑定'}), 400
+            secret = _totp_generate_secret()
+            with self._lock, self._conn() as conn:
+                conn.execute('UPDATE users SET totp_pending=? WHERE id=?', (secret, uid))
+            self._audit('2fa_setup', user=g.current_user, target=user['username'], detail='开始绑定两步验证')
+            return jsonify({'success': True, 'secret': secret,
+                            'otpauth_uri': _totp_provisioning_uri(secret, user['username']),
+                            'issuer': TOTP_ISSUER, 'digits': TOTP_DIGITS, 'period': TOTP_PERIOD})
+
+        @bp.route('/api/auth/me/2fa/enable', methods=['POST'])
+        def me_2fa_enable():
+            uid = g.current_user['id']
+            user = self.get_user_by_id(uid)
+            if user.get('totp_enabled'):
+                return jsonify({'error': '两步验证已开启'}), 400
+            pending = user.get('totp_pending') or ''
+            if not pending:
+                return jsonify({'error': '请先获取绑定密钥'}), 400
+            code = ((request.get_json(silent=True) or {}).get('code') or '').strip()
+            matched = _totp_match(pending, code)
+            if matched is None:
+                self._audit('2fa_enable_failed', user=g.current_user, target=user['username'], detail='动态码错误')
+                return jsonify({'error': '动态码错误，请重试'}), 400
+            with self._lock, self._conn() as conn:
+                conn.execute('UPDATE users SET totp_secret=?, totp_enabled=1, totp_pending=?, totp_last_step=0 WHERE id=?',
+                             (pending, '', uid))
+            self._audit('2fa_enabled', user=g.current_user, target=user['username'], detail='开启两步验证')
+            return jsonify({'success': True, 'message': '两步验证已开启',
+                            'user': self.public_view(self.get_user_by_id(uid))})
+
+        @bp.route('/api/auth/me/2fa/disable', methods=['POST'])
+        def me_2fa_disable():
+            uid = g.current_user['id']
+            data = request.get_json(silent=True) or {}
+            user = self.get_user_by_id(uid)
+            if not user.get('totp_enabled'):
+                return jsonify({'error': '两步验证未开启'}), 400
+            # 需同时校验口令 + 当前动态码，防止仅凭口令关闭 2FA
+            if not self._verify_password(data.get('password') or '', user['salt'], user['password_hash']):
+                return jsonify({'error': '密码错误'}), 400
+            matched = _totp_match(user.get('totp_secret'), (data.get('code') or '').strip())
+            if matched is None:
+                return jsonify({'error': '动态码错误或已失效'}), 400
+            with self._lock, self._conn() as conn:
+                conn.execute('UPDATE users SET totp_enabled=0, totp_secret=?, totp_pending=?, totp_last_step=0 WHERE id=?',
+                             ('', '', uid))
+            self._audit('2fa_disabled', user=g.current_user, target=user['username'], detail='禁用两步验证')
+            return jsonify({'success': True, 'message': '两步验证已禁用',
+                            'user': self.public_view(self.get_user_by_id(uid))})
+
+        @bp.route('/api/users/<int:uid>/2fa/reset', methods=['POST'])
+        def admin_reset_2fa(uid):
+            """管理员恢复通道：用户丢失认证器时重置其 2FA，并强制其重新登录"""
+            target_user = self.get_user_by_id(uid)
+            if target_user is None:
+                return jsonify({'error': '用户不存在'}), 404
+            with self._lock, self._conn() as conn:
+                conn.execute('UPDATE users SET totp_enabled=0, totp_secret=?, totp_pending=?, totp_last_step=0, '
+                             'session_version=session_version+1 WHERE id=?', ('', '', uid))
+            self._audit('admin_2fa_reset', user=g.current_user, target=target_user['username'], detail='管理员重置两步验证')
+            return jsonify({'success': True, 'message': '已重置该用户的两步验证',
+                            'user': self.public_view(self.get_user_by_id(uid))})
 
 
 def create_auth_manager(base_dir=None):

@@ -1,0 +1,211 @@
+<!-- AGPL-3.0 -->
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>训练负荷 · 跑步管理系统</title><link rel="stylesheet" href="/vendor/bootstrap-5.3.0/bootstrap.min.css"><link rel="stylesheet" href="/common.css">
+<style>
+.ld-controls{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center}
+.ld-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem}
+.ld-card{border:1px solid var(--line);border-radius:var(--radius);padding:.75rem;background:var(--soft)}
+.ld-label{color:var(--muted);font-size:.85rem}
+.ld-value{font-size:1.5rem;color:var(--ink)}
+.ld-hint{color:var(--muted);font-size:.78rem}
+.ld-num{font-variant-numeric:tabular-nums}
+#loadChart svg{width:100%;height:auto;display:block}
+.ld-legend{display:flex;flex-wrap:wrap;gap:1rem;color:var(--muted);font-size:.85rem}
+.ld-swatch{display:inline-block;width:.9rem;height:.9rem;border-radius:2px;vertical-align:-.1rem}
+.ld-assumptions li{margin:.35rem 0;color:var(--muted)}
+a:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:700px){.ld-cards{grid-template-columns:repeat(2,1fr)}.ld-value{font-size:1.2rem}}
+</style></head>
+<body><script>window.PAGE='training-load';</script>
+<main class="rm-main">
+<p>TRAINING LOAD / 训练负荷分析</p>
+<h1>训练负荷：体能、疲劳与形态</h1>
+<p class="rm-evidence">基于现有活动实时计算 TRIMP 日负荷与 Banister EWMA（CTL 42 天 / ATL 7 天 / TSB）。仅为负荷参考，不构成医疗或训练处方；缺测不补零，软删除活动不计入。</p>
+<p role="status" id="loadStatus" aria-live="polite"></p>
+<section class="rm-panel" aria-labelledby="ldControlsTitle">
+<h2 id="ldControlsTitle">统计窗口</h2>
+<div class="ld-controls"><label for="loadDays">窗口（天）</label>
+<select id="loadDays" class="form-select" style="max-width:12rem">
+<option value="7">7 天</option><option value="30">30 天</option><option value="90" selected>90 天</option><option value="180">180 天</option><option value="365">365 天</option>
+</select></div>
+</section>
+<section class="rm-panel" aria-labelledby="ldSummaryTitle">
+<h2 id="ldSummaryTitle">当前形态</h2>
+<div id="loadSummary" class="ld-cards" aria-live="polite"></div>
+<p id="loadInterpretation" class="ld-num"></p>
+</section>
+<section class="rm-panel" aria-labelledby="ldChartTitle">
+<h2 id="ldChartTitle">负荷与形态趋势</h2>
+<div id="loadChart" aria-live="polite"></div>
+<p class="ld-legend" id="loadLegend">
+<span><span class="ld-swatch" style="background:var(--accent)"></span> CTL 体能（42天）</span>
+<span><span class="ld-swatch" style="background:var(--green)"></span> ATL 疲劳（7天）</span>
+<span><span class="ld-swatch" style="background:var(--muted)"></span> TSB 形态（前一日差值）</span>
+</p>
+<p class="rm-evidence">CTL/ATL 为指数加权移动平均（种子 0，含零负荷日）；TSB=前一日 CTL−ATL。窗口截断不重置种子；虚线为零基线。</p>
+</section>
+<section class="rm-panel" aria-labelledby="ldAssumptionsTitle">
+<h2 id="ldAssumptionsTitle">计算假设</h2>
+<ul id="loadAssumptions" class="ld-assumptions"></ul>
+</section>
+<p id="loadEmpty" hidden>暂无活动记录。导入 FIT 或手工补录后，这里将显示负荷与形态趋势。</p>
+<p><a href="/">返回总览</a> · <a href="/training-stats">训练统计</a></p>
+</main>
+<script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script><script src="/common.js"></script><script src="/icons.js"></script>
+<script>
+'use strict';
+const LD_EMPTY = '暂无活动记录';
+const LD_COLORS = {ctl: 'var(--accent)', atl: 'var(--green)', tsb: 'var(--muted)'};
+const LD_NAMES = {ctl: 'CTL 体能（42天）', atl: 'ATL 疲劳（7天）', tsb: 'TSB 形态（前一日差值）'};
+
+function ldFmt(v, digits) {
+  if (v === null || v === undefined || !isFinite(v)) return '—';
+  return Number(v).toFixed(digits === undefined ? 1 : digits);
+}
+
+// 纯函数：三线共享 y 域（含零基线），x 等距。单点居中，不崩。
+function ldScale(series, W, H, pad) {
+  const n = series.length;
+  const xs = n === 1 ? [W / 2] : series.map((_, i) => pad + (W - 2 * pad) * i / (n - 1));
+  let lo = 0, hi = 0;
+  for (const p of series) for (const k of ['ctl', 'atl', 'tsb']) {
+    if (p[k] < lo) lo = p[k];
+    if (p[k] > hi) hi = p[k];
+  }
+  if (hi === lo) hi = lo + 1;
+  const y = v => H - pad - (H - 2 * pad) * (v - lo) / (hi - lo);
+  return {xs, yMin: lo, yMax: hi, yZero: y(0),
+          y_ctl: series.map(p => y(p.ctl)), y_atl: series.map(p => y(p.atl)), y_tsb: series.map(p => y(p.tsb))};
+}
+
+function ldPath(xs, ys) {
+  if (!xs.length) return '';
+  return xs.map((x, i) => (i ? 'L' : 'M') + x.toFixed(2) + ' ' + ys[i].toFixed(2)).join(' ');
+}
+
+function ldRenderChart(series, summary) {
+  const W = 760, H = 300, pad = 40, NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', '训练负荷趋势：' + series[0].date + ' 至 ' + series[series.length - 1].date +
+    '，当前 CTL ' + ldFmt(summary.current_ctl, 2) + '、ATL ' + ldFmt(summary.current_atl, 2) + '、TSB ' + ldFmt(summary.current_tsb, 2));
+  const sc = ldScale(series, W, H, pad);
+  const zero = document.createElementNS(NS, 'line');
+  zero.setAttribute('class', 'ld-zero');
+  zero.setAttribute('x1', String(pad)); zero.setAttribute('x2', String(W - pad));
+  zero.setAttribute('y1', sc.yZero.toFixed(2)); zero.setAttribute('y2', sc.yZero.toFixed(2));
+  zero.setAttribute('stroke', 'var(--line)'); zero.setAttribute('stroke-dasharray', '4 4');
+  svg.appendChild(zero);
+  for (const key of ['ctl', 'atl', 'tsb']) {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('class', 'ld-line ld-' + key);
+    p.setAttribute('d', ldPath(sc.xs, sc['y_' + key]));
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', LD_COLORS[key]);
+    p.setAttribute('stroke-width', '2');
+    const t = document.createElementNS(NS, 'title');
+    t.textContent = LD_NAMES[key];
+    p.appendChild(t);
+    svg.appendChild(p);
+  }
+  const ticks = [[sc.xs[0], series[0].date, 'start'], [sc.xs[sc.xs.length - 1], series[series.length - 1].date, 'end']];
+  for (const [x, label, anchor] of ticks) {
+    const text = document.createElementNS(NS, 'text');
+    text.setAttribute('class', 'ld-tick');
+    text.setAttribute('x', x.toFixed(2)); text.setAttribute('y', String(H - 8));
+    text.setAttribute('text-anchor', anchor);
+    text.setAttribute('fill', 'var(--muted)'); text.setAttribute('font-size', '12');
+    text.textContent = label;
+    svg.appendChild(text);
+  }
+  return svg;
+}
+
+function ldSummaryCards(s) {
+  return [
+    {label: 'CTL 体能', value: ldFmt(s.current_ctl, 2), hint: '42 天指数加权'},
+    {label: 'ATL 疲劳', value: ldFmt(s.current_atl, 2), hint: '7 天指数加权'},
+    {label: 'TSB 形态', value: ldFmt(s.current_tsb, 2), hint: '前一日 CTL−ATL'},
+    {label: '急性/慢性比', value: ldFmt(s.acute_chronic_ratio, 2), hint: 'ATL÷CTL'},
+    {label: '近 7 日负荷', value: ldFmt(s.load_7d, 1), hint: 'TRIMP 合计'},
+  ];
+}
+
+function ldAssumptionsList(a) {
+  const e = a.ewma || {};
+  return [
+    '心率参数：HRmax ' + a.hr_max + '、HRrest ' + a.hr_rest + '、性别 ' + a.sex +
+      '（来源：' + (a.hr_params_source === 'profile' ? '标定档案' : '缺省假设') + '）',
+    a.trimp,
+    a.fallback,
+    'EWMA：CTL ' + e.ctl_days + ' 天、ATL ' + e.atl_days + ' 天，种子 ' + e.seed + '，含零负荷日',
+    a.tsb,
+    '时区：' + a.timezone,
+    a.window,
+    a.interpretation,
+    a.disclaimer,
+  ].filter(Boolean);
+}
+
+function ldRender(d) {
+  const chart = document.getElementById('loadChart');
+  const summaryBox = document.getElementById('loadSummary');
+  const empty = document.getElementById('loadEmpty');
+  document.getElementById('loadInterpretation').textContent = d.summary.interpretation;
+  document.getElementById('loadAssumptions').replaceChildren(...ldAssumptionsList(d.assumptions).map(t => {
+    const li = document.createElement('li'); li.textContent = t; return li;
+  }));
+  summaryBox.replaceChildren(...ldSummaryCards(d.summary).map(c => {
+    const div = document.createElement('div'); div.className = 'ld-card';
+    const label = document.createElement('div'); label.className = 'ld-label'; label.textContent = c.label;
+    const value = document.createElement('div'); value.className = 'ld-value ld-num'; value.textContent = c.value;
+    const hint = document.createElement('div'); hint.className = 'ld-hint'; hint.textContent = c.hint;
+    div.append(label, value, hint);
+    return div;
+  }));
+  const hasActivity = d.series.some(p => (p.activities || 0) > 0 || p.daily_load > 0);
+  if (!hasActivity) {
+    empty.hidden = false;
+    chart.replaceChildren();
+    return;
+  }
+  empty.hidden = true;
+  chart.replaceChildren(ldRenderChart(d.series, d.summary));
+}
+
+let ldRetired = false;
+window.addEventListener('pagehide', () => { ldRetired = true; });
+window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
+window.addEventListener('storage', (e) => { if (e.key === 'poserun_token' || e.key === null) location.reload(); });
+
+async function ldLoad() {
+  const status = document.getElementById('loadStatus');
+  const days = document.getElementById('loadDays').value;
+  const token = localStorage.getItem('poserun_token');
+  status.textContent = '正在计算训练负荷…';
+  try {
+    const r = await apiFetch('/api/running/load?days=' + encodeURIComponent(days), {cache: 'no-store'});
+    if (ldRetired || token !== localStorage.getItem('poserun_token')) return;
+    const d = await r.json();
+    if (ldRetired || token !== localStorage.getItem('poserun_token')) return;
+    if (!r.ok) { status.textContent = d.error || '加载失败'; return; }
+    status.textContent = '窗口 ' + d.days + ' 天（含零负荷日）· 生成于 ' + d.generated_at;
+    ldRender(d);
+  } catch (e) {
+    status.textContent = '加载失败：' + e.message;
+  }
+}
+
+window.onAuthReady = function (user) {
+  if (!user) return;
+  document.getElementById('loadDays').addEventListener('change', ldLoad);
+  ldLoad();
+};
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {LD_EMPTY, ldFmt, ldScale, ldPath, ldRenderChart, ldSummaryCards, ldAssumptionsList};
+}
+</script>
+</body></html>

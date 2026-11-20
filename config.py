@@ -3,6 +3,7 @@ PoseRun Analyzer 配置文件
 """
 
 import os
+import secrets
 from pathlib import Path
 
 
@@ -15,7 +16,10 @@ class Config:
     REPORTS_FOLDER = BASE_DIR / 'reports'
     
     # Flask 配置
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'change-me-to-a-random-secret-key')
+    # 密钥：不再提供硬编码回退（ui-hardening 2026-11-13）。未设置环境变量时
+    # 生成进程内随机值。本模块目前仅被 tests/test_pose_analyzer.py 引用；
+    # 实际服务会话密钥由 auth.py 持久化管理，此随机值不影响生产行为。
+    SECRET_KEY = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
     MAX_CONTENT_LENGTH = int(os.environ.get('MAX_CONTENT_LENGTH', 52428800))  # 50MB
     
     # 服务器配置

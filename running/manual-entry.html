@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>手工补录 · 澄明训练台</title><link rel="stylesheet" href="/vendor/bootstrap-5.3.0/bootstrap.min.css"><link rel="stylesheet" href="/common.css">
+<style>
+/* 页面级补充：共享令牌与三主题来自 /common.css 与 /themes/theme-system.css（本地，无 CDN）。 */
+#manualForm p{margin:0 0 14px}
+#manualForm label{display:block;font-weight:600;margin-bottom:4px}
+#manualForm input,#manualForm select,#manualForm textarea{width:100%;max-width:420px;padding:10px;background:var(--panel,#fff);color:var(--ink,inherit);border:1px solid var(--line,#dce4ec);border-radius:8px}
+#manualForm input:focus,#manualForm select:focus,#manualForm textarea:focus{outline:3px solid var(--accent,#165cc6);outline-offset:1px}
+#manualForm button{min-height:44px;margin:8px 8px 8px 0;padding:8px 18px;border-radius:8px;border:1px solid var(--accent,#165cc6);background:var(--soft,#e9f1ff);color:var(--accent,#165cc6);font-weight:600;cursor:pointer}
+#manualForm button:disabled{opacity:.55;cursor:wait}
+#manualForm button[type=submit]{background:var(--accent,#165cc6);color:#fff}
+.rm-evidence-tag{display:inline-block;padding:2px 10px;border:1px solid var(--line,#dce4ec);border-radius:999px;background:var(--soft,#e9f1ff);color:var(--ink,inherit);font-size:13px}
+#manualList li{display:grid;gap:6px}
+#manualList .rm-actions button{min-height:40px;margin:0 8px 0 0;padding:6px 14px;border-radius:8px;border:1px solid var(--line,#dce4ec);background:var(--panel,#fff);color:var(--ink,inherit);cursor:pointer}
+#manualList .rm-actions button.rm-danger{border-color:#e74c3c;color:#e74c3c}
+:focus-visible{outline:3px solid var(--accent,#165cc6);outline-offset:3px}
+@media(max-width:700px){#manualForm input,#manualForm select,#manualForm textarea{max-width:100%}}
+</style></head>
+<body><script>window.PAGE='manual';</script><main class="rm-main">
+<p>澄明训练台 ／ 训练档案</p><h1>手工补录</h1>
+<p>补录忘记记录的跑步。手工记录为<strong>跑者自填，未核验</strong>，计入周报与总览；缺测不臆造配速。</p>
+<p role="status" id="manualStatus" aria-live="polite"></p>
+<section class="rm-panel">
+<h2 id="manualFormTitle">新增手工记录</h2>
+<form id="manualForm">
+<p><label for="manualStart">开始时间（当地时间）</label><input type="datetime-local" id="manualStart" required></p>
+<p><label for="manualZone">时区</label><select id="manualZone">
+<option value="Asia/Shanghai" selected>北京时间 · Asia/Shanghai</option>
+<option value="UTC">UTC</option>
+<option value="America/New_York">America/New_York</option>
+<option value="Europe/London">Europe/London</option>
+</select></p>
+<p><label for="manualDistance">距离（km）</label><input type="number" id="manualDistance" min="0" step="0.1" inputmode="decimal" placeholder="如 5.2"></p>
+<p><label for="manualDuration">时长（分钟）</label><input type="number" id="manualDuration" min="0" step="1" inputmode="decimal" placeholder="如 31"></p>
+<p><label for="manualHr">平均心率（bpm）</label><input type="number" id="manualHr" min="0" step="1" inputmode="numeric" placeholder="选填"></p>
+<p><label for="manualNotes">备注</label><textarea id="manualNotes" rows="3" maxlength="2000" placeholder="选填，最多 2000 字"></textarea></p>
+<p class="rm-evidence" id="manualPace"></p>
+<button type="submit" id="manualSubmit">保存</button><button type="button" id="manualCancel" hidden>取消</button>
+</form>
+</section>
+<section class="rm-panel">
+<h2>我的手工记录</h2>
+<p class="rm-evidence">证据标签：<span class="rm-evidence-tag">手工记录 · 未核验</span> · 设备记录（FIT/佳明）不在此页修改</p>
+<ul id="manualList" class="rm-list"></ul>
+<p id="manualEmpty" class="rm-evidence" hidden>暂无手工记录。</p>
+</section>
+<section class="rm-panel" id="manualHistoryPanel" hidden>
+<h2>更正历史</h2>
+<ol id="manualHistory"></ol>
+<p><button type="button" id="manualHistoryClose">关闭</button></p>
+</section>
+<a href="/weekly-report">查看周报</a> · <a href="/">返回总览</a>
+</main>
+<script>
+(function () {
+  'use strict';
+  // 纯函数（node --test 复用，无 DOM 依赖）
+  function formatPace(distanceM, durationS) {
+    if (!(distanceM > 0) || !(durationS > 0)) return '';
+    var seconds = Math.round(durationS * 1000 / distanceM);
+    return Math.floor(seconds / 60) + "'" + String(seconds % 60).padStart(2, '0') + '" /km';
+  }
+  function zoneOffsetMs(instant, zone) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(new Date(instant));
+      var get = function (type) { for (var i = 0; i < parts.length; i++) if (parts[i].type === type) return Number(parts[i].value); return 0; };
+      return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second')) - instant;
+    } catch (err) { return 0; }
+  }
+  function toZoneISO(local, zone) {
+    if (!local) return '';
+    var guess = Date.parse(local + ':00Z');
+    if (isNaN(guess)) return '';
+    var offset = zoneOffsetMs(guess, zone);
+    var instant = guess - offset;
+    var refined = zoneOffsetMs(instant, zone);
+    if (refined !== offset) instant = guess - refined;
+    return new Date(instant).toISOString();
+  }
+  function toLocalInput(iso, zone) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(iso));
+      var get = function (type) { for (var i = 0; i < parts.length; i++) if (parts[i].type === type) return parts[i].value; return ''; };
+      return get('year') + '-' + get('month') + '-' + get('day') + 'T' + get('hour') + ':' + get('minute');
+    } catch (err) { return ''; }
+  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = { formatPace: formatPace, toZoneISO: toZoneISO, toLocalInput: toLocalInput };
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  var $ = function (id) { return document.getElementById(id); };
+  if (!$('manualForm')) return;
+  var EVIDENCE = '手工记录 · 未核验';
+  var editingId = null;
+  function status(text) { var el = $('manualStatus'); if (el) el.textContent = text || ''; }
+  function api(path, options) {
+    options = options || {};
+    var headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+    var token = localStorage.getItem('poserun_token');
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    options.headers = headers;
+    return fetch('/api/running' + path, options).then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (data) {
+        if (resp.status === 401) { location.href = '/'; throw new Error('请先登录'); }
+        if (!resp.ok) throw new Error(data.error || '请求失败');
+        return data;
+      });
+    });
+  }
+  function fmtStart(iso) {
+    try { return new Date(iso).toLocaleString('zh-CN', { timeZone: $('manualZone').value, dateStyle: 'medium', timeStyle: 'short' }); }
+    catch (err) { return iso; }
+  }
+  function fmtKm(m) { return m == null ? '距离缺测' : (m / 1000).toFixed(2) + ' km'; }
+  function fmtMin(s) { return s == null ? '时长缺测' : (s / 60).toFixed(1) + ' 分钟'; }
+  function renderList(rows) {
+    var list = $('manualList'), empty = $('manualEmpty');
+    list.replaceChildren();
+    var mine = rows.filter(function (a) { return a.source === 'manual'; });
+    empty.hidden = mine.length > 0;
+    mine.forEach(function (a) {
+      var li = document.createElement('li');
+      var pace = formatPace(a.distance_m, a.duration_s);
+      var head = document.createElement('p');
+      head.textContent = fmtStart(a.start_time) + ' · ' + fmtKm(a.distance_m) + ' · ' + fmtMin(a.duration_s) +
+        (a.avg_hr == null ? '' : ' · ' + a.avg_hr + ' bpm') + (pace ? ' · ' + pace : ' · 配速缺测不臆造');
+      var tag = document.createElement('span');
+      tag.className = 'rm-evidence-tag';
+      tag.textContent = EVIDENCE + (a.revision > 0 ? ' · 已更正 ' + a.revision + ' 次' : '');
+      var note = null;
+      if (a.notes) { note = document.createElement('p'); note.className = 'rm-evidence'; note.textContent = a.notes; }
+      var actions = document.createElement('p');
+      actions.className = 'rm-actions';
+      function button(label, fn, danger) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        if (danger) b.className = 'rm-danger';
+        b.addEventListener('click', fn);
+        return b;
+      }
+      actions.append(button('编辑', function () { startEdit(a); }),
+        button('历史', function () { showHistory(a.id); }),
+        button('删除', function () { removeActivity(a.id); }, true));
+      li.append(head, tag, note, actions);
+      list.append(li);
+    });
+  }
+  function loadList() {
+    return api('/activities?limit=500').then(function (data) { renderList(data.activities); status(''); })
+      .catch(function (e) { status(e.message); });
+  }
+  function readForm() {
+    var payload = { start_time: toZoneISO($('manualStart').value, $('manualZone').value) };
+    if (!payload.start_time) return null;
+    var distance = $('manualDistance').value, duration = $('manualDuration').value, hr = $('manualHr').value;
+    if (distance !== '') payload.distance_km = Number(distance);
+    if (duration !== '') payload.duration_min = Number(duration);
+    if (hr !== '') payload.avg_hr = Number(hr);
+    var notes = $('manualNotes').value.trim();
+    if (notes) payload.notes = notes;
+    return payload;
+  }
+  function resetForm() {
+    editingId = null;
+    $('manualForm').reset();
+    $('manualFormTitle').textContent = '新增手工记录';
+    $('manualSubmit').textContent = '保存';
+    $('manualCancel').hidden = true;
+    $('manualPace').textContent = '';
+  }
+  function startEdit(a) {
+    editingId = a.id;
+    $('manualStart').value = toLocalInput(a.start_time, $('manualZone').value);
+    $('manualDistance').value = a.distance_m == null ? '' : String(parseFloat((a.distance_m / 1000).toFixed(3)));
+    $('manualDuration').value = a.duration_s == null ? '' : String(parseFloat((a.duration_s / 60).toFixed(3)));
+    $('manualHr').value = a.avg_hr == null ? '' : String(a.avg_hr);
+    $('manualNotes').value = a.notes || '';
+    $('manualFormTitle').textContent = '更正手工记录 #' + a.id;
+    $('manualSubmit').textContent = '保存更正';
+    $('manualCancel').hidden = false;
+    $('manualPace').textContent = formatPace(a.distance_m, a.duration_s) ? '当前配速 ' + formatPace(a.distance_m, a.duration_s) + '（自填，未核验）' : '缺测：不臆造配速。';
+    $('manualStart').focus();
+    $('manualForm').scrollIntoView();
+  }
+  function showHistory(aid) {
+    return api('/activities/' + aid + '/revisions').then(function (data) {
+      var ol = $('manualHistory');
+      ol.replaceChildren();
+      if (!data.revisions.length) {
+        var li = document.createElement('li');
+        li.textContent = '尚无更正历史。';
+        ol.append(li);
+      }
+      data.revisions.forEach(function (rev, index) {
+        var li = document.createElement('li');
+        var prior = JSON.parse(rev.prior_json);
+        li.textContent = '第 ' + (index + 1) + ' 次更正 · ' + new Date(rev.changed_at).toLocaleString('zh-CN', { timeZone: $('manualZone').value }) +
+          ' · 更正前：' + fmtKm(prior.distance_m) + ' / ' + fmtMin(prior.duration_s) +
+          (prior.avg_hr == null ? '' : ' / ' + prior.avg_hr + ' bpm') +
+          (prior.notes ? ' / 备注：' + prior.notes : '');
+        ol.append(li);
+      });
+      $('manualHistoryPanel').hidden = false;
+      $('manualHistoryPanel').scrollIntoView();
+    }).catch(function (e) { status(e.message); });
+  }
+  function removeActivity(aid) {
+    if (!confirm('删除这条手工记录？将不再计入周报与总览（软删除，本版本不提供恢复入口）。')) return;
+    return api('/activities/' + aid, { method: 'DELETE' }).then(function () { status('已删除。'); return loadList(); })
+      .catch(function (e) { status(e.message); });
+  }
+  $('manualForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var payload = readForm();
+    if (!payload) { status('请填写开始时间。'); return; }
+    var button = $('manualSubmit');
+    button.disabled = true;
+    var request = editingId
+      ? api('/activities/' + editingId, { method: 'PATCH', body: JSON.stringify(payload) })
+      : api('/activities', { method: 'POST', body: JSON.stringify(payload) });
+    request.then(function (data) {
+      status(editingId ? '已更正（第 ' + data.revision + ' 版）。' : (data.duplicate ? '已有相同时间距离的记录，未重复添加。' : '已保存。手工记录未核验，计入周报。'));
+      resetForm();
+      return loadList();
+    }).catch(function (err) { status(err.message); }).then(function () { button.disabled = false; });
+  });
+  $('manualCancel').addEventListener('click', resetForm);
+  $('manualHistoryClose').addEventListener('click', function () { $('manualHistoryPanel').hidden = true; });
+  function previewPace() {
+    var distance = $('manualDistance').value, duration = $('manualDuration').value;
+    var d = distance === '' ? null : Number(distance) * 1000;
+    var s = duration === '' ? null : Number(duration) * 60;
+    var pace = formatPace(d, s);
+    $('manualPace').textContent = pace ? '当前配速 ' + pace + '（自填，未核验）' : '缺测：不臆造配速。';
+  }
+  ['manualDistance', 'manualDuration'].forEach(function (id) { $(id).addEventListener('input', previewPace); });
+  window.onAuthReady = function () { loadList(); };
+})();
+</script>
+<script src="/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js"></script><script src="/common.js"></script><script src="/icons.js"></script></body></html>

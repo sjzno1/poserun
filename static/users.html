@@ -70,8 +70,9 @@
                     </div>
                     <div class="card-body">
                         <p class="text-muted small mb-2">
-                            系统每日自动备份用户库与历史记录（保留最近 7 份），备份文件存于 reports/_backup_data_*.tar.gz。
+                            系统每日自动备份用户库与历史记录，备份文件存于 <code>data/.backups/</code>。<span id="backupRetention">保留策略加载中…</span>
                         </p>
+                        <div id="backupWarn"></div>
                         <div id="backupLast" class="small mb-2 text-muted">加载中...</div>
                         <table class="table table-sm align-middle mb-0">
                             <thead class="table-light">
@@ -135,6 +136,33 @@
                         ? '最近备份：成功 — ' + last.file + '（' + fmtSize(last.size) + '，' + last.at + '）'
                         : '最近备份：失败 — ' + (last.error || '未知错误') + '（' + last.at + '）')
                     : '暂无备份记录';
+                // 保留策略以后端 status() 为准（不自动删除，需人工审查）。
+                const retEl = document.getElementById('backupRetention');
+                retEl.textContent = (data.retention === 'manual_review_no_automatic_deletion')
+                    ? '不自动删除旧备份，保留策略需人工审查。'
+                    : '保留策略：' + (data.retention || '未知');
+                // 下次每日备份预估 = 最新备份文件时间 + 24h（后端按 24h 循环；此为预估，非承诺）。
+                const warnBox = document.getElementById('backupWarn');
+                const newest = data.backups.length ? data.backups[data.backups.length - 1] : null;
+                let warnHtml = '';
+                if (newest && newest.mtime) {
+                    const mt = new Date(String(newest.mtime).replace(' ', 'T'));
+                    if (!isNaN(mt.getTime())) {
+                        const next = new Date(mt.getTime() + 24 * 3600 * 1000);
+                        const pad = n => String(n).padStart(2, '0');
+                        const fmtTime = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+                        if (Date.now() - mt.getTime() > 24 * 3600 * 1000) {
+                            warnHtml += '<div class="alert alert-danger py-2 small"><i class="fas fa-triangle-exclamation me-1"></i>警告：已超过 24 小时没有新的备份（最近备份 ' + escapeHtml(newest.mtime) + '），请立即检查备份任务。</div>';
+                        }
+                        warnHtml += '<div class="small text-muted mb-2"><i class="fas fa-clock me-1"></i>下次每日备份预估：' + fmtTime(next) + '（按最近备份时间 + 24h 估算，实际以后端循环为准）</div>';
+                    }
+                } else {
+                    warnHtml += '<div class="alert alert-warning py-2 small">尚无备份文件；服务启动时会执行首次备份。</div>';
+                }
+                if (last && last.ok === false) {
+                    warnHtml += '<div class="alert alert-danger py-2 small">最近一次备份尝试失败：' + escapeHtml(last.error || '未知错误') + '</div>';
+                }
+                warnBox.innerHTML = warnHtml;
                 tbody.innerHTML = '';
                 if (!data.backups.length) {
                     tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-2">暂无备份文件</td></tr>';
@@ -183,9 +211,10 @@
                     const roleBadge = u.role === 'admin'
                         ? '<span class="badge badge-admin">管理员</span>'
                         : '<span class="badge badge-user">普通用户</span>';
-                    const statusBadge = u.active
+                    const statusBadge = (u.active
                         ? '<span class="badge bg-success">启用</span>'
-                        : '<span class="badge bg-secondary">禁用</span>';
+                        : '<span class="badge bg-secondary">禁用</span>')
+                        + (u.totp_enabled ? ' <span class="badge bg-info">2FA</span>' : '');
                     let actions = '';
                     if (!self) {
                         actions += u.role === 'admin'
@@ -195,6 +224,7 @@
                             ? '<button class="btn btn-outline-secondary btn-xs" onclick="doToggleActive(' + u.id + ', false)">禁用</button>'
                             : '<button class="btn btn-outline-success btn-xs" onclick="doToggleActive(' + u.id + ', true)">启用</button>';
                         actions += '<button class="btn btn-outline-info btn-xs" onclick="doResetPassword(' + u.id + ', \'' + escapeHtml(u.username) + '\')">重置密码</button>';
+                        if (u.totp_enabled) actions += '<button class="btn btn-outline-warning btn-xs" onclick="doReset2fa(' + u.id + ', \'' + escapeHtml(u.username) + '\')">重置2FA</button>';
                         actions += '<button class="btn btn-outline-danger btn-xs" onclick="doDeleteUser(' + u.id + ', \'' + escapeHtml(u.username) + '\')">删除</button>';
                     } else {
                         actions = '<span class="text-muted small">（当前账号）</span>';
@@ -257,6 +287,17 @@
                 const data = await resp.json();
                 if (!resp.ok) { alert(data.error || '重置失败'); return; }
                 alert('密码已重置为：' + pwd);
+            } catch (err) { /* 401 已由 apiFetch 处理 */ }
+        }
+
+        async function doReset2fa(uid, username) {
+            const ok = confirm('确认重置 ' + username + ' 的两步验证？\n\n用于该用户丢失认证器时恢复登录：重置后其 2FA 关闭、需重新登录并重新绑定。');
+            if (!ok) return;
+            try {
+                const resp = await apiFetch('/api/users/' + uid + '/2fa/reset', { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) { alert(data.error || '重置失败'); return; }
+                loadUsers();
             } catch (err) { /* 401 已由 apiFetch 处理 */ }
         }
 

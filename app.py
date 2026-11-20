@@ -49,17 +49,18 @@ class FiniteJSONProvider(DefaultJSONProvider):
 
 
 app.json = FiniteJSONProvider(app)
-# CORS 限定来源：通过环境变量 CORS_ORIGINS 配置（逗号分隔）。
-# 默认仅允许本机开发来源；生产部署请显式设置为你的站点域名。
-_cors_origins = os.environ.get(
-    'CORS_ORIGINS', 'http://localhost:8080,http://127.0.0.1:8080')
-CORS(app, origins=[o.strip() for o in _cors_origins.split(',') if o.strip()])
+# CORS 限定来源（生产安全：仅允许本站域名 + 本地开发端口跨域调用）。
+# 默认仅本机开发端口；部署时用环境变量 POSERUN_CORS_ORIGINS（逗号分隔）注入本站 HTTPS 域名，
+# 例如 POSERUN_CORS_ORIGINS="https://run.example.com,https://run.example.com:99"。
+_CORS_ORIGINS = ['http://localhost:8080', 'http://127.0.0.1:8080']
+_CORS_ORIGINS += [o.strip() for o in os.environ.get('POSERUN_CORS_ORIGINS', '').split(',') if o.strip()]
+CORS(app, origins=_CORS_ORIGINS)
 
 # 请求限流：按登录用户限（未登录回退到 IP），保护 CPU 密集的分析接口
 def _rate_limit_key():
     try:
         return f"user:{g.current_user['id']}"
-    except (RuntimeError, KeyError, TypeError):
+    except (RuntimeError, KeyError, TypeError, AttributeError):
         return f"ip:{get_remote_address()}"
 
 
@@ -95,6 +96,8 @@ limiter = Limiter(
     storage_uri="memory://",
     default_limits=[],
 )
+# 登录接口限流（含 2FA 动态码尝试），按 IP，防撞库/动态码爆破
+app.view_functions['auth.login'] = limiter.limit("30 per 5 minutes")(app.view_functions['auth.login'])
 
 # 跑姿历史记录（SQLite 历史库 data/history.db，与 auth.db 同卷持久化）
 history_store = HistoryStore(os.path.join('data', 'history.db'))
@@ -105,6 +108,12 @@ audit_store = AuditStore(os.path.join('data', 'audit.db'))
 # 跑者画像（SQLite 画像库 data/profiles.db）
 profile_store = ProfileStore(os.path.join('data', 'profiles.db'))
 profile_engine = PersonalizedEngine(profile_store)
+
+from running.themes import register_themes
+register_themes(app, profile_store.db_path, limiter=limiter)
+app.config['GARMIN_LIVE_ENABLED'] = os.environ.get('GARMIN_LIVE_ENABLED') == '1'
+from running import register_running
+running_store = register_running(app, data_dir=os.environ.get('POSERUN_DATA_DIR', 'data'), limiter=limiter)
 
 
 def _audit(action, target='', detail='', user=None):
@@ -416,7 +425,9 @@ def index():
 @app.route('/common.js', methods=['GET'])
 def release_common_js():
     text = Path(app.static_folder, 'common.js').read_text(encoding='utf-8')
-    response = app.response_class(text.replace('__POSERUN_VERSION__', VERSION), mimetype='application/javascript')
+    text = text.replace('__POSERUN_VERSION__', VERSION)
+    text = text.replace('__POSERUN_MEASUREMENT_REV__', CAPABILITIES['measurement_revision'])
+    response = app.response_class(text, mimetype='application/javascript')
     response.headers['Cache-Control'] = 'no-store'
     return response
 
@@ -1537,6 +1548,35 @@ def export_record(record_id):
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Disposition': f'attachment; filename=poserun_record_{record_id}.json',
     })
+
+
+@app.route('/api/export/report/<int:record_id>/<fmt>', methods=['GET'])
+def export_report_format(record_id, fmt):
+    """导出同一报告的 DOCX/PDF（未评分报告在分析时已按 camp-two-page-v1 同步生成两种格式）。
+
+    所有权校验与 /api/export/record 一致：仅记录所有者或管理员可下载。
+    兄弟格式文件不在非管理员资产精确匹配清单内，故所有权校验通过后用
+    safe_resolve 直接解析；未知/缺失文件返回 404，不伪造内容。
+    """
+    if fmt not in ('docx', 'pdf'):
+        return jsonify({'error': '仅支持 docx 或 pdf 格式'}), 400
+    user = g.current_user
+    is_admin = user['role'] == 'admin'
+    rec = history_store.get_record(record_id)
+    if not rec:
+        return jsonify({'error': '记录不存在'}), 404
+    if not history_store._owns_record(rec, user, is_admin):
+        return jsonify({'error': '无权访问该记录', 'code': 'forbidden'}), 403
+    report_file = rec.get('report_file') or ''
+    if (not report_file or '/' in report_file or '\\' in report_file
+            or '\x00' in report_file or report_file in ('.', '..')):
+        return jsonify({'error': '该记录无报告文件'}), 404
+    target = os.path.splitext(report_file)[0] + '.' + fmt
+    path, ok = safe_resolve(REPORTS_FOLDER, target)
+    if not ok or os.path.islink(path) or not os.path.isfile(path):
+        return jsonify({'error': f'该报告的 {fmt.upper()} 版本不存在（旧记录可能仅单一格式，重新分析可生成双格式）'}), 404
+    _audit('report_download', target=target, detail=f'导出{fmt.upper()}报告')
+    return send_file(path, as_attachment=True, download_name=target)
 
 
 # 错误处理

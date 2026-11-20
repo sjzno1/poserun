@@ -149,6 +149,56 @@ class AtomicPublish(unittest.TestCase):
             self.assertEqual(self._ids(root), [1])
             self.assertEqual(list((root / 'reports').iterdir()), [])
 
+    def _cross_mount_rename(self, root, job):
+        # Simulate production's separate data/reports bind mounts: a rename from the
+        # job (data mount) into reports (reports mount) raises EXDEV even on one
+        # filesystem; same-mount renames (keyframes, staging->final) stay real.
+        import errno
+        real_rename = os.rename
+        reports_prefix = str(root / 'reports') + os.sep
+        job_prefix = str(job) + os.sep
+        calls = {'exdev': 0}
+
+        def fake_rename(src, dst):
+            s, d = os.fspath(src), os.fspath(dst)
+            if s.startswith(job_prefix) and d.startswith(reports_prefix):
+                calls['exdev'] += 1
+                raise OSError(errno.EXDEV, 'Invalid cross-device link', s, None, d)
+            return real_rename(src, dst)
+        return fake_rename, calls
+
+    def test_publish_cross_mount_exdev_stages_then_atomic(self):
+        import worker_supervisor as ws
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            job = self._stage(root)
+            fake_rename, calls = self._cross_mount_rename(root, job)
+            with patch('os.rename', side_effect=fake_rename):
+                ws.publish(job, root, 1)
+            self.assertGreater(calls['exdev'], 0)
+            self.assertEqual(self._ids(root), [1, 2, 3])
+            self.assertEqual((root / 'reports' / 'r2.pdf').read_bytes(), b'%PDF-1.4 dummy')
+            self.assertTrue((root / 'reports' / 'r3.pdf').is_file())
+            self.assertTrue((root / 'data' / 'keyframes' / 'k3' / 'frame.jpg').is_file())
+            # Final names only: no hidden publish-staging directory may leak.
+            self.assertEqual(sorted(p.name for p in (root / 'reports').iterdir()),
+                             ['r2.pdf', 'r3.pdf'])
+
+    def test_publish_cross_mount_conflict_rolls_back(self):
+        import worker_supervisor as ws
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            job = self._stage(root)
+            (root / 'reports' / 'r3.pdf').write_bytes(b'pre-existing')
+            fake_rename, calls = self._cross_mount_rename(root, job)
+            with patch('os.rename', side_effect=fake_rename):
+                with self.assertRaises(RuntimeError):
+                    ws.publish(job, root, 1)
+            self.assertEqual(self._ids(root), [1])
+            self.assertEqual(sorted(p.name for p in (root / 'reports').iterdir()), ['r3.pdf'])
+            self.assertEqual((root / 'reports' / 'r3.pdf').read_bytes(), b'pre-existing')
+            self.assertEqual(list((root / 'data' / 'keyframes').iterdir()), [])
+
 
 class BatchFailClosed(unittest.TestCase):
     def test_batch_missing_asset_404_before_any_analysis(self):

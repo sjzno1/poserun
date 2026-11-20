@@ -1,6 +1,6 @@
 """
 PoseRun Analyzer - 样板格式报告生成器
-按照《姿势跑法学员技术分析评测》样板排版：
+按照《2025姿势跑法夏训营学员技术分析评测》样板排版：
   第1页：标题 + 姓名/教练/得分/日期 + 环节|分项|评判结果|改进建议 表格
   第2页：关键帧照片（上3下4）+ 图注 + 总结建议语
 生成 PDF（reportlab，内置 STSong-Light 中文字体，无需字体文件）
@@ -162,15 +162,14 @@ def generate_template_report(data: dict, keyframes: list,
 
 
 # ---------------------------------------------------------------------- #
-# 样板数据——用于生成示例报告
+# 样板数据（2025夏训营 第一周期 示例跑者）——用于生成示例报告
 # ---------------------------------------------------------------------- #
-# 虚构示例数据：仅用于演示样板排版，不对应任何真实学员或真实评测。
 SAMPLE_DATA = {
-    'title': '姿势跑法学员技术分析评测',
+    'title': '2025 姿势跑法夏训营学员技术分析评测',
     'name': '示例跑者',
     'coach': '示例教练',
     'score': 71,
-    'date': '2026-01-01',
+    'date': '2025-08-01',
     'rows': [
         ('落地', '脚刚触地位置', '轻度的脚跟触地',
          '勾脚会让胫骨前肌疲劳，同时让触地时间延长，日常需要主动松解小腿前侧及'
@@ -211,8 +210,10 @@ SAMPLE_DATA = {
 
 if __name__ == '__main__':
     import sys
-    img_dir = sys.argv[1] if len(sys.argv) > 1 else './sample_frames'
-    out = sys.argv[2] if len(sys.argv) > 2 else './sample_template_report.pdf'
+    img_dir = sys.argv[1] if len(sys.argv) > 1 else \
+        'sample_images'
+    out = sys.argv[2] if len(sys.argv) > 2 else \
+        'sample_report.pdf'
 
     photo_files = ['p0_img1.png', 'p0_img2.png', 'p0_img3.png', 'p0_img4.png',
                    'p0_img5.png', 'p0_img8.png', 'p0_img9.png']
